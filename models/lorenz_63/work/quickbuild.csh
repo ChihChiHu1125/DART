@@ -26,7 +26,7 @@ set MPI_TARGETS = "filter perfect_model_obs"
 
 # set default (override with -mpi or -nompi):
 #  0 = build without MPI, 1 = build with MPI
-set with_mpi = 0
+set with_mpi = 1
 
 
 # ---------------
@@ -60,6 +60,7 @@ endif
 # Build any NetCDF files from .cdl files
 #----------------------------------------------------------------------
 
+
 @ n = 0
 
 @ has_cdl = `ls *.cdl | wc -l` >& /dev/null
@@ -85,7 +86,6 @@ endif
 #----------------------------------------------------------------------
 # Build all the single-threaded targets
 #----------------------------------------------------------------------
-
 @ n = 0
 
 foreach TARGET ( mkmf_preprocess mkmf_* )
@@ -123,6 +123,8 @@ foreach TARGET ( mkmf_preprocess mkmf_* )
 
 skip:
 end
+
+
 
 if ( $cdebug ) then
    echo 'preserving .o and .mod files for debugging'
