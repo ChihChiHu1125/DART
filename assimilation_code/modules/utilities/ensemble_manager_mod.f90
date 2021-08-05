@@ -63,6 +63,8 @@ type ensemble_type
    real(r8),       allocatable  :: copies(:, :)         ! Dimensioned (num_copies, my_num_vars)
    ! Storage on next line is used when each pe has subset of copies of all vars
    real(r8),       allocatable  :: vars(:, :)           ! Dimensioned (num_vars, my_num_copies)
+   ! Storage on next line is used for kernel (only used for DART-PFF)
+   real(r8),       allocatable  :: kernel(:,:,:)        ! Dimensioned (my_num_vars, num_copies, num_copies)
    ! Time is only related to var complete
    type(time_type), allocatable :: time(:)
    integer                      :: distribution_type
