@@ -714,6 +714,7 @@ subroutine set_up_ens_distribution(ens_handle)
 type (ensemble_type),  intent(inout)  :: ens_handle
 
 integer :: num_per_pe_below, num_left_over, i
+integer :: ens_size
 
 ! Option 1: Maximum separation for both vars and copies
 ! Compute the total number of copies I'll get for var complete
@@ -735,11 +736,16 @@ else
 endif
 
 !Allocate the storage for copies and vars all at once
+
+ens_size = ens_handle%num_copies - ens_handle%num_extras
+
+write(*,*) 'CCWU test ensemble size =',ens_size
 allocate(ens_handle%my_copies(ens_handle%my_num_copies),              &
          ens_handle%time     (ens_handle%my_num_copies),                 &
          ens_handle%my_vars  (ens_handle%my_num_vars),                &
-         ens_handle%copies   (ens_handle%num_copies, ens_handle%my_num_vars))
-
+         ens_handle%copies   (ens_handle%num_copies, ens_handle%my_num_vars), &
+         ens_handle%kernel   (ens_handle%my_num_vars, ens_size, ens_size  ))
+        
 
 if(ens_handle%transpose_type == 2) then
    allocate(ens_handle%vars(ens_handle%num_vars, ens_handle%my_num_copies))
