@@ -114,6 +114,10 @@ type(time_type) :: dummy_time
 type(obs_def_type) :: obs_def
 type(obs_type)     :: observation
 
+
+! variables used for kernel
+real(r8), allocatable :: kernel(:,:)
+
 ! IMPORTANT, IT IS ASSUMED THAT ACTUAL ENSEMBLES COME FIRST
 ! It is also assumed that the ensemble members are in the same
 ! order in each of the handles
@@ -243,6 +247,9 @@ else ! distributed state
       my_copy_indices(i) = i  ! copy-complete fwd operator so indices are 1 to ens_size
    enddo
 
+
+allocate(kernel(num_copies_to_calc, num_copies_to_calc))
+
    ! Loop through all my observations in the set
    MY_OBSERVATIONS: do j = 1,  obs_fwd_op_ens_handle%my_num_vars
 
@@ -282,10 +289,12 @@ else ! distributed state
 
    call get_expected_obs_distrib_state(seq, thiskey, &
       dummy_time, isprior, istatus, &
-      assimilate_this_ob, evaluate_this_ob, ens_handle, num_copies_to_calc, my_copy_indices, expected_obs)
+      assimilate_this_ob, evaluate_this_ob, ens_handle, num_copies_to_calc, my_copy_indices, expected_obs, kernel)
 
       obs_fwd_op_ens_handle%copies(1:num_copies_to_calc, j) = expected_obs
+      obs_fwd_op_ens_handle%kernel(j,1:num_copies_to_calc,1:num_copies_to_calc)= kernel
 
+      write(*,*) "CCWU (# obs, kernel value 1-2) = ", j, kernel(1,2), kernel(2,1)
    ! collect dart qc
    global_qc_value = nint(obs_fwd_op_ens_handle%copies(OBS_GLOBAL_QC_COPY, j))
 
@@ -387,7 +396,7 @@ end subroutine get_obs_ens_distrib_state
 !> 
 !------------------------------------------------------------------------------
 subroutine get_expected_obs_distrib_state(seq, keys, state_time, isprior, &
-   istatus, assimilate_this_ob, evaluate_this_ob, state_ens_handle, num_ens, copy_indices, expected_obs)
+   istatus, assimilate_this_ob, evaluate_this_ob, state_ens_handle, num_ens, copy_indices, expected_obs, kernel)
 
 type(obs_sequence_type), intent(in)    :: seq  !! the observation sequence
 integer,                 intent(in)    :: keys(:)  !! list of obs numbers
@@ -408,7 +417,15 @@ character(len=32)  :: state_size_string, obs_key_string, identity_obs_string
 integer :: obs_kind_ind
 integer :: num_obs, i
 
+! variables used for kernel
+integer :: j, k
+real(r8), allocatable, intent(out), optional :: kernel(:,:)
+
+
 num_obs = size(keys)
+
+write(*,*) "CCWU num_obs = ",num_obs
+allocate(kernel(num_ens, num_ens))
 
 ! NEED to initialize istatus to okay value
 istatus = 0
@@ -439,6 +456,13 @@ do i = 1, num_obs
       endif
 
       expected_obs =  get_state(-1*int(obs_kind_ind,i8), state_ens_handle)
+      
+      ! calculate the pairwise kernel values
+      do j = 1, num_ens
+          do k = 1, num_ens
+                kernel(j,k) = abs(expected_obs(j)-expected_obs(k))
+          enddo
+      enddo
 
       ! FIXME : we currently have no option to eval only identity obs,
       ! or select to skip their assimilation via namelist.
