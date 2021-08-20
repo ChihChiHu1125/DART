@@ -880,6 +880,10 @@ AdvanceTime : do
            OBS_EXTRA_QC_COPY, OBS_MEAN_START, OBS_VAR_START, &
            isprior=.true., prior_qc_copy=prior_qc_copy)
 
+write(*,*) "CCWU ", obs_fwd_op_ens_handle%kernel(1,1,2), obs_fwd_op_ens_handle%kernel(1,2,1)
+write(*,*) "CCWU ", obs_fwd_op_ens_handle%kernel(2,1,2), obs_fwd_op_ens_handle%kernel(2,2,1)
+write(*,*) "CCWU ", obs_fwd_op_ens_handle%kernel(3,1,2), obs_fwd_op_ens_handle%kernel(3,2,1)
+
    call timestamp_message('After  computing prior observation values')
    call     trace_message('After  computing prior observation values')
 

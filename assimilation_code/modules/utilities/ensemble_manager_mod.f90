@@ -739,9 +739,9 @@ endif
 
 ens_size = ens_handle%num_copies - ens_handle%num_extras
 
-if (my_task_id() .eq. 0) then
-    write(*,*) 'CCWU test ensemble size =',ens_size
-endif
+!if (my_task_id() .eq. 0) then
+!    write(*,*) 'CCWU test ensemble size =',ens_size
+!endif
 
 allocate(ens_handle%my_copies(ens_handle%my_num_copies),              &
          ens_handle%time     (ens_handle%my_num_copies),                 &

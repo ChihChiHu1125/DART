@@ -294,7 +294,7 @@ allocate(kernel(num_copies_to_calc, num_copies_to_calc))
       obs_fwd_op_ens_handle%copies(1:num_copies_to_calc, j) = expected_obs
       obs_fwd_op_ens_handle%kernel(j,1:num_copies_to_calc,1:num_copies_to_calc)= kernel
 
-      write(*,*) "CCWU (# obs, kernel value 1-2) = ", j, kernel(1,2), kernel(2,1)
+    ! write(*,*) "CCWU kernel = ", j, kernel(1,2), kernel(2,1)
    ! collect dart qc
    global_qc_value = nint(obs_fwd_op_ens_handle%copies(OBS_GLOBAL_QC_COPY, j))
 
@@ -420,11 +420,11 @@ integer :: num_obs, i
 ! variables used for kernel
 integer :: j, k
 real(r8), allocatable, intent(out), optional :: kernel(:,:)
+real    :: k_width !! the width of the kernel
 
 
 num_obs = size(keys)
 
-write(*,*) "CCWU num_obs = ",num_obs
 allocate(kernel(num_ens, num_ens))
 
 ! NEED to initialize istatus to okay value
@@ -458,9 +458,15 @@ do i = 1, num_obs
       expected_obs =  get_state(-1*int(obs_kind_ind,i8), state_ens_handle)
       
       ! calculate the pairwise kernel values
+      k_width = 5
       do j = 1, num_ens
           do k = 1, num_ens
-                kernel(j,k) = abs(expected_obs(j)-expected_obs(k))
+                if (j>k) then
+                        kernel(j,k) = kernel(k,j)
+                else
+                        kernel(j,k) = abs(expected_obs(j)-expected_obs(k))
+                       ! kernel(j,k) = exp( -(expected_obs(j)-expected_obs(k))**2/k_width )
+                endif
           enddo
       enddo
 
