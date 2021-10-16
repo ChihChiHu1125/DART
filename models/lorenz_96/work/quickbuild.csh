@@ -30,7 +30,7 @@ set MPI_TARGETS = "filter perfect_model_obs model_mod_check closest_member_tool"
 
 # set default (override with -mpi or -nompi):
 #  0 = build without MPI, 1 = build with MPI
-set with_mpi = 0
+set with_mpi = 1
 
 
 # ---------------

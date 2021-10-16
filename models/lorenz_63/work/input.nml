@@ -69,7 +69,7 @@
    inf_deterministic           = .true.,                  .true.,
    inf_initial                 = 1.0,                     1.0,
    inf_lower_bound             = 1.0,                     1.0,
-   inf_upper_bound             = 100.0,                   1000000.0,
+   inf_upper_bound             = 1000000.0,               1000000.0,
    inf_damping                 = 1.0,                     1.0,
    inf_sd_initial              = 0.0,                     0.0,
    inf_sd_lower_bound          = 0.0,                     0.0,
@@ -94,7 +94,7 @@
 
 &assim_tools_nml
    filter_kind                     = 1,
-   cutoff                          = 1000000.0
+   cutoff                          = 0.00001,
    sort_obs_inc                    = .false.,
    spread_restoration              = .false.,
    sampling_error_correction       = .false.,
@@ -131,8 +131,7 @@
    b      = 2.6666666666667,
    deltat = 0.01,
    time_step_days = 0,
-   time_step_seconds = 3600,
-   solver = 'RK2'
+   time_step_seconds = 3600
    /
 
 &utilities_nml
@@ -143,13 +142,11 @@
    /
 
 &preprocess_nml
-   overwrite_output        = .true.
-   input_obs_def_mod_file  = '../../../observations/forward_operators/DEFAULT_obs_def_mod.F90'
-   output_obs_def_mod_file = '../../../observations/forward_operators/obs_def_mod.f90'
-   input_obs_qty_mod_file  = '../../../assimilation_code/modules/observations/DEFAULT_obs_kind_mod.F90'
-   output_obs_qty_mod_file = '../../../assimilation_code/modules/observations/obs_kind_mod.f90'
-   obs_type_files          = '../../../observations/forward_operators/obs_def_1d_state_mod.f90'
-   quantity_files          = '../../../assimilation_code/modules/observations/oned_quantities_mod.f90'
+    input_obs_def_mod_file = '../../../observations/forward_operators/DEFAULT_obs_def_mod.F90', 
+   output_obs_def_mod_file = '../../../observations/forward_operators/obs_def_mod.f90', 
+   input_obs_kind_mod_file = '../../../assimilation_code/modules/observations/DEFAULT_obs_kind_mod.F90', 
+  output_obs_kind_mod_file = '../../../assimilation_code/modules/observations/obs_kind_mod.f90', 
+               input_files = '../../../observations/forward_operators/obs_def_1d_state_mod.f90'
    /
 
 &obs_sequence_tool_nml
@@ -171,9 +168,9 @@
    init_skip_seconds     = 0,
    Nregions              = 3,
    trusted_obs           = 'null',
-   lonlim1               = 0.00, 0.00, 0.50
-   lonlim2               = 1.01, 0.50, 1.01
-   reg_names             = 'whole', 'yin', 'yang'
+   lonlim1               = 0.00, 0.00, 0.50, -1.0,
+   lonlim2               = 1.01, 0.50, 1.01, -1.0,
+   reg_names             = 'whole', 'yin', 'yang', 'bogus',
    create_rank_histogram = .true.,
    outliers_in_histogram = .true.,
    use_zero_error_obs    = .false.,
@@ -187,5 +184,4 @@
    input_qc_threshold       =  3.0,
    outlier_threshold        = -1.0,
 /
-
 

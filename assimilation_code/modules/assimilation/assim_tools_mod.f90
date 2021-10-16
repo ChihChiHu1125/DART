@@ -393,6 +393,8 @@ real(digits12), allocatable :: elapse_array(:)
 
 integer, allocatable :: n_close_state_items(:), n_close_obs_items(:)
 
+real(r8)::CCWU_ARRAY0(50000)
+
 ! timing disabled by default
 timing(:)  = .false.
 t_base(:)  = 0.0_r8
@@ -629,7 +631,14 @@ allow_missing_in_state = get_missing_ok_status()
 ! be called nobs * nstate * ntasks.
 
 ! Loop through all the (global) observations sequentially
+
+
 SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
+
+! Define CCWU_ARRAY
+
+!CCWU_ARRAY0 = my_task_id()
+call RANDOM_NUMBER(CCWU_ARRAY0)
 
    if (timing(MLOOP))  call start_timer(t_base(MLOOP))
    if (timing(LG_GRN)) call start_timer(t_base(LG_GRN))
@@ -666,6 +675,20 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
 
    ! Find out who has this observation and where it is
    call get_var_owner_index(ens_handle, int(i,i8), owner, owners_index)
+
+
+!if (my_task_id()==0) then
+!        write(*,*) 'before send and receive obs ',i-1,': CCWU_ARRAY (in PE0)= ',CCWU_ARRAY0(1)
+!elseif (my_task_id()==1) then
+!        write(*,*) 'before send and receive obs ',i-1,': CCWU_ARRAY (in PE1)= ',CCWU_ARRAY0(1)
+!elseif (my_task_id()==2) then
+!        write(*,*) 'before send and receive obs ',i-1,': CCWU_ARRAY (in PE2)= ',CCWU_ARRAY0(1)
+!elseif (my_task_id()==3) then
+!        write(*,*) 'before send and receive obs ',i-1,': CCWU_ARRAY (in PE3)= ',CCWU_ARRAY0(1)
+!elseif (my_task_id()==4) then
+!        write(*,*) 'before send and receive obs ',i-1,': CCWU_ARRAY (in PE4)= ',CCWU_ARRAY0(1)
+!endif
+
 
    ! Following block is done only by the owner of this observation
    !-----------------------------------------------------------------------
@@ -755,19 +778,32 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
       !>the three below and three more which omit the 2 localization values?
       !>how much does this cost in time? time this and see.
       whichvert_real = real(whichvert_obs_in_localization_coord, r8)
+
       if(local_varying_ss_inflate) then
          call broadcast_send(map_pe_to_task(ens_handle, owner), obs_prior, obs_inc, &
             orig_obs_prior_mean, orig_obs_prior_var, net_a, scalar1=obs_qc, &
             scalar2=vertvalue_obs_in_localization_coord, scalar3=whichvert_real)
+!         call broadcast_send(map_pe_to_task(ens_handle, owner), obs_prior,obs_inc, &
+!            orig_obs_prior_mean, orig_obs_prior_var, CCWU_ARRAY0, scalar1=obs_qc, &
+!            scalar2=vertvalue_obs_in_localization_coord, scalar3=whichvert_real)
 
       else if(local_single_ss_inflate .or. local_obs_inflate) then
          call broadcast_send(map_pe_to_task(ens_handle, owner), obs_prior, obs_inc, &
            net_a, scalar1=my_inflate, scalar2=my_inflate_sd, scalar3=obs_qc, &
            scalar4=vertvalue_obs_in_localization_coord, scalar5=whichvert_real)
+!         call broadcast_send(map_pe_to_task(ens_handle, owner), obs_prior,obs_inc, &
+!           net_a, CCWU_ARRAY0, scalar1=my_inflate, scalar2=my_inflate_sd, scalar3=obs_qc, &
+!           scalar4=vertvalue_obs_in_localization_coord, scalar5=whichvert_real)
+
       else
          call broadcast_send(map_pe_to_task(ens_handle, owner), obs_prior, obs_inc, &
            net_a, scalar1=obs_qc, &
            scalar2=vertvalue_obs_in_localization_coord, scalar3=whichvert_real)
+
+!         call broadcast_send(map_pe_to_task(ens_handle, owner), obs_prior, obs_inc, &
+!           net_a, CCWU_ARRAY0, scalar1=obs_qc, &
+!           scalar2=vertvalue_obs_in_localization_coord, scalar3=whichvert_real)
+
       endif
 
    ! Next block is done by processes that do NOT own this observation
@@ -782,18 +818,50 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
          call broadcast_recv(map_pe_to_task(ens_handle, owner), obs_prior, obs_inc, &
             orig_obs_prior_mean, orig_obs_prior_var, net_a, scalar1=obs_qc, &
             scalar2=vertvalue_obs_in_localization_coord, scalar3=whichvert_real)
+!         call broadcast_recv(map_pe_to_task(ens_handle, owner), obs_prior,obs_inc, &
+!            orig_obs_prior_mean, orig_obs_prior_var, CCWU_ARRAY0, scalar1=obs_qc, &
+!            scalar2=vertvalue_obs_in_localization_coord, scalar3=whichvert_real)
+
+
       else if(local_single_ss_inflate .or. local_obs_inflate) then
          call broadcast_recv(map_pe_to_task(ens_handle, owner), obs_prior, obs_inc, &
             net_a, scalar1=my_inflate, scalar2=my_inflate_sd, scalar3=obs_qc, &
             scalar4=vertvalue_obs_in_localization_coord, scalar5=whichvert_real)
+!         call broadcast_recv(map_pe_to_task(ens_handle, owner), obs_prior,obs_inc, &
+!            net_a, CCWU_ARRAY0,scalar1=my_inflate, scalar2=my_inflate_sd, scalar3=obs_qc, &
+!            scalar4=vertvalue_obs_in_localization_coord, scalar5=whichvert_real)
+
+
       else
          call broadcast_recv(map_pe_to_task(ens_handle, owner), obs_prior, obs_inc, &
            net_a, scalar1=obs_qc, &
            scalar2=vertvalue_obs_in_localization_coord, scalar3=whichvert_real)
+
+!         call broadcast_recv(map_pe_to_task(ens_handle, owner), obs_prior,obs_inc, &
+!           net_a, CCWU_ARRAY0, scalar1=obs_qc, &
+!           scalar2=vertvalue_obs_in_localization_coord, scalar3=whichvert_real)
+
       endif
       whichvert_obs_in_localization_coord = nint(whichvert_real)
 
    endif
+
+!if (my_task_id()==0) then
+!        write(*,*) 'after send and receive obs ',i-1,': CCWU_ARRAY (in PE0) = ',CCWU_ARRAY0(1)
+!elseif (my_task_id()==1) then
+!        write(*,*) 'after send and receive obs ',i-1,': CCWU_ARRAY (in PE1) = ',CCWU_ARRAY0(1)
+!elseif (my_task_id()==2) then
+!        write(*,*) 'after send and receive obs ',i-1,': CCWU_ARRAY (in PE2) = ',CCWU_ARRAY0(1)
+!elseif (my_task_id()==3) then
+!        write(*,*) 'after send and receive obs ',i-1,': CCWU_ARRAY (in PE3) = ',CCWU_ARRAY0(1)
+!elseif (my_task_id()==4) then
+!        write(*,*) 'after send and receive obs ',i-1,': CCWU_ARRAY (in PE4) = ',CCWU_ARRAY0(1)
+!endif
+
+!IF ((mod(i,1000)==0).and.(my_task_id()==0)) then
+!        write(*,*) 'CCWU'
+!        write(*,*) size(CCWU_ARRAY0)
+!endif
    !-----------------------------------------------------------------------
 
    ! Everybody is doing this section, cycle if qc is bad
