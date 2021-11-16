@@ -92,6 +92,8 @@ use forward_operator_mod,  only : get_obs_ens_distrib_state
 
 use quality_control_mod,   only : initialize_qc
 
+use inner_domain_mod,      only : clear_inner_domain, output_inner_domain_info
+
 !------------------------------------------------------------------------------
 
 implicit none
@@ -881,13 +883,11 @@ AdvanceTime : do
            OBS_EXTRA_QC_COPY, OBS_MEAN_START, OBS_VAR_START, &
            isprior=.true., prior_qc_copy=prior_qc_copy)
 
-!write(*,*) 'my_task_id = ',my_task_id()
+   ! Check on the inner domain info
+   call output_inner_domain_info(50 + my_task_id())
 
-!if (my_task_id().eq. 2) then
-!        write(*,*) "CCWU ", obs_fwd_op_ens_handle%kernel(1,1,2), obs_fwd_op_ens_handle%kernel(1,2,1)
-!        write(*,*) "CCWU ", obs_fwd_op_ens_handle%kernel(2,1,2), obs_fwd_op_ens_handle%kernel(2,2,1)
-!        write(*,*) "CCWU ", obs_fwd_op_ens_handle%kernel(3,1,2), obs_fwd_op_ens_handle%kernel(3,2,1)
-!endif
+   ! Clear the inner domain info (should be done later when it's being used elsewhere)
+   call clear_inner_domain 
 
    call timestamp_message('After  computing prior observation values')
    call     trace_message('After  computing prior observation values')
