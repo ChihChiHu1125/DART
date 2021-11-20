@@ -1,22 +1,8 @@
  Inner domain info
-           3  observations with max_num_obs            3
+           2  observations with max_num_obs            2
  observation            1  has index            1
- inner domain var            1  is index                      2
- inner domain var            2  is index                      3
- observation            2  has index            2
- inner domain var            1  is index                      3
- inner domain var            2  is index                      4
- observation            3  has index            3
- inner domain var            1  is index                      4
- inner domain var            2  is index                      5
- Inner domain info
-           3  observations with max_num_obs            3
- observation            1  has index            1
- inner domain var            1  is index                      2
- inner domain var            2  is index                      3
- observation            2  has index            2
- inner domain var            1  is index                      3
- inner domain var            2  is index                      4
- observation            3  has index            3
- inner domain var            1  is index                      4
- inner domain var            2  is index                      5
+ inner domain var            1  is index                     2
+ inner domain var            2  is index                     3
+ observation            2  has index            3
+ inner domain var            1  is index                     4
+ inner domain var            2  is index                     5

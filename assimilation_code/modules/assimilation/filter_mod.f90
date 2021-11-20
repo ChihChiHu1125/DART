@@ -887,7 +887,7 @@ AdvanceTime : do
    call output_inner_domain_info(50 + my_task_id())
 
    ! Clear the inner domain info (should be done later when it's being used elsewhere)
-   call clear_inner_domain 
+   ! call clear_inner_domain 
 
    call timestamp_message('After  computing prior observation values')
    call     trace_message('After  computing prior observation values')
@@ -941,6 +941,10 @@ AdvanceTime : do
       PRIOR_INF_COPY, PRIOR_INF_SD_COPY, OBS_KEY_COPY, OBS_GLOBAL_QC_COPY, &
       OBS_MEAN_START, OBS_MEAN_END, OBS_VAR_START, &
       OBS_VAR_END, inflate_only = .false.)
+
+! CCWU:
+! PFF clear info in the inner domain
+   call clear_inner_domain
 
    call timestamp_message('After  observation assimilation')
    call     trace_message('After  observation assimilation')

@@ -233,7 +233,7 @@ subroutine get_var_index_inner_domain(n_obs, var_index, num_vars)
 
 integer, intent(in)  :: n_obs
 integer, intent(out) :: var_index(:)
-integer, intent(out) :: num_vars
+integer, intent(out), optional :: num_vars
 
 ! Check for out of range
 if(n_obs > inner_domain%num_obs) then

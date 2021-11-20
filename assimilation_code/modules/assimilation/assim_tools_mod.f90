@@ -71,6 +71,9 @@ use distributed_state_mod, only : create_mean_window, free_mean_window
 
 use quality_control_mod, only : good_dart_qc, DARTQC_FAILED_VERT_CONVERT
 
+use inner_domain_mod, only : get_num_vars_inner_domain, get_var_index_inner_domain,       &
+                             get_var_ens_inner_domain
+
 implicit none
 private
 
@@ -81,6 +84,7 @@ public :: filter_assim, &
 
 ! Indicates if module initialization subroutine has been called yet
 logical :: module_initialized = .false.
+
 
 integer :: print_timestamps    = 0
 integer :: print_trace_details = 0
@@ -185,6 +189,12 @@ logical  :: only_area_adapt  = .true.
 ! for vertical conversion.  We have changed the default to be .false.
 ! compared to previous versions of this namelist item.
 logical  :: distribute_mean  = .false.
+
+! CCWU:
+! parameters used for the PFF: define the maximum number of inner domain
+! variables within all the obs
+integer, parameter :: max_ni = 50
+
 
 namelist / assim_tools_nml / filter_kind, cutoff, sort_obs_inc, &
    spread_restoration, sampling_error_correction,                          &
@@ -377,8 +387,27 @@ logical :: local_obs_inflate
 
 integer, allocatable :: n_close_state_items(:), n_close_obs_items(:)
 
+! CCWU:
+! the index for inner domain variables that temporarily stored for broadcasting
+! the size will vary; based on the size of inner domain for each obs
+integer  :: inner_index(max_ni)
+real(r8) :: inner_index_r8(max_ni) ! temporay storage for index in real number
+
+
+! the ensemble information for inner doamin variables temporarily stored for
+! broadcasting. There are two blocks: one for current pseudo time step, the
+! other is for the prior values.  In each block, we start with the first inner 
+! domain variable, and go through all the ensemble member, then the next inner domain variable, ...
+
+real(r8) :: inner_prior(max_ni*ens_size), inner_current(max_ni*ens_size)
+
+integer :: Ni    ! the size of inner domain
+real(r8):: Ni_r8 ! the real(Ni)
+integer :: jj ! dummy variable
+
 ! Just to make sure multiple tasks are running for tests
-write(*, *) 'my_task_id ', my_task_id()
+! CCWU:
+!write(*, *) 'my_task_id ', my_task_id()
 
 ! how about this?  look for imbalances in the tasks
 allocate(n_close_state_items(obs_ens_handle%num_vars), &
@@ -610,17 +639,6 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
    call get_var_owner_index(ens_handle, int(i,i8), owner, owners_index)
 
 
-!if (my_task_id()==0) then
-!        write(*,*) 'before send and receive obs ',i-1,': CCWU_ARRAY (in PE0)= ',CCWU_ARRAY0(1)
-!elseif (my_task_id()==1) then
-!        write(*,*) 'before send and receive obs ',i-1,': CCWU_ARRAY (in PE1)= ',CCWU_ARRAY0(1)
-!elseif (my_task_id()==2) then
-!        write(*,*) 'before send and receive obs ',i-1,': CCWU_ARRAY (in PE2)= ',CCWU_ARRAY0(1)
-!elseif (my_task_id()==3) then
-!        write(*,*) 'before send and receive obs ',i-1,': CCWU_ARRAY (in PE3)= ',CCWU_ARRAY0(1)
-!elseif (my_task_id()==4) then
-!        write(*,*) 'before send and receive obs ',i-1,': CCWU_ARRAY (in PE4)= ',CCWU_ARRAY0(1)
-!endif
 
 
    ! Following block is done only by the owner of this observation
@@ -656,40 +674,77 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
       ! coordinate transformation
       whichvert_real = real(whichvert_obs_in_localization_coord, r8)
 
-      call broadcast_send(map_pe_to_task(ens_handle, owner), obs_prior,    &
-         orig_obs_prior_mean, orig_obs_prior_var,                          &
+      ! Prepare the definition of inner_index and inner_info
+      
+      ! want to know how many variables in the inner domain (i.e., Ni)
+      Ni = get_num_vars_inner_domain(owners_index)
+
+      ! Put the index of state variables for inner domain:
+      inner_index = 0
+      call get_var_index_inner_domain(owners_index, inner_index(1:Ni), Ni)
+ 
+      ! Put the ensemble info of state variables for inner domain:
+
+      ! prior values
+      do jj = 1, Ni
+           call get_var_ens_inner_domain(owners_index, jj, inner_prior(ens_size*(jj-1)+1: ens_size*jj))
+      enddo
+
+
+      ! current values
+      do jj = 1, Ni
+           call get_var_ens_inner_domain(owners_index, jj, inner_current(ens_size*(jj-1)+1: ens_size*jj))
+      enddo
+
+!      write(*,*) '(sent obs',i,') pe =',my_task_id(),' Ni =', Ni
+!      write(*,*) '(sent obs',i,') pe =',my_task_id(),' inner_index = ', inner_index(1:Ni)
+
+! CAUTION:: need to modify below
+! PFF needs to send/receive one scalar (Ni = # inner domain variable) 
+!    and one integer array (the array that stores inner domain index)
+
+     inner_index_r8 = 1.0_r8*inner_index
+     Ni_r8          = 1.0_r8*Ni
+
+      call broadcast_send(map_pe_to_task(ens_handle, owner), obs_prior, inner_current,  &
+         inner_prior, inner_index_r8, orig_obs_prior_mean, orig_obs_prior_var,    &
          scalar1=obs_qc, scalar2=vertvalue_obs_in_localization_coord,      &
-         scalar3=whichvert_real, scalar4=my_inflate, scalar5=my_inflate_sd)
+         scalar3=whichvert_real, scalar4=my_inflate, scalar5=my_inflate_sd, scalar6=Ni_r8)
+
+!      call broadcast_send(map_pe_to_task(ens_handle, owner), obs_prior,    &
+!         orig_obs_prior_mean, orig_obs_prior_var,                          &
+!         scalar1=obs_qc, scalar2=vertvalue_obs_in_localization_coord,      &
+!         scalar3=whichvert_real, scalar4=my_inflate, scalar5=my_inflate_sd)
 
 
    ! Next block is done by processes that do NOT own this observation
    !-----------------------------------------------------------------------
    else
-
-      call broadcast_recv(map_pe_to_task(ens_handle, owner), obs_prior,    &
-         orig_obs_prior_mean, orig_obs_prior_var,                          & 
+      call broadcast_recv(map_pe_to_task(ens_handle, owner), obs_prior, inner_current,  &
+         inner_prior, inner_index_r8, orig_obs_prior_mean, orig_obs_prior_var,   &
          scalar1=obs_qc, scalar2=vertvalue_obs_in_localization_coord,      &
-         scalar3=whichvert_real, scalar4=my_inflate, scalar5=my_inflate_sd)
+         scalar3=whichvert_real, scalar4=my_inflate, scalar5=my_inflate_sd, scalar6=Ni_r8)
+
+! CCWU:
+! PFF - turns the r8 real number back to integer:
+      inner_index = nint(inner_index_r8)
+      Ni          = nint(Ni_r8)
+
+!      write(*,*) '(receive obs',i,') pe =',my_task_id(),' Ni = ',Ni_r8
+!      write(*,*) '(receive obs',i,') pe =',my_task_id(),' inner_index  = ',inner_index(1:Ni)
+!      write(*,*) '(receive obs',i,') pe =',my_task_id(),' inner_prior  = ',inner_prior(1:5)
+
+
+!      call broadcast_recv(map_pe_to_task(ens_handle, owner), obs_prior,    &
+!         orig_obs_prior_mean, orig_obs_prior_var,                          & 
+!         scalar1=obs_qc, scalar2=vertvalue_obs_in_localization_coord,      &
+!         scalar3=whichvert_real, scalar4=my_inflate, scalar5=my_inflate_sd)
+
       whichvert_obs_in_localization_coord = nint(whichvert_real)
+
 
    endif
 
-!if (my_task_id()==0) then
-!        write(*,*) 'after send and receive obs ',i-1,': CCWU_ARRAY (in PE0) = ',CCWU_ARRAY0(1)
-!elseif (my_task_id()==1) then
-!        write(*,*) 'after send and receive obs ',i-1,': CCWU_ARRAY (in PE1) = ',CCWU_ARRAY0(1)
-!elseif (my_task_id()==2) then
-!        write(*,*) 'after send and receive obs ',i-1,': CCWU_ARRAY (in PE2) = ',CCWU_ARRAY0(1)
-!elseif (my_task_id()==3) then
-!        write(*,*) 'after send and receive obs ',i-1,': CCWU_ARRAY (in PE3) = ',CCWU_ARRAY0(1)
-!elseif (my_task_id()==4) then
-!        write(*,*) 'after send and receive obs ',i-1,': CCWU_ARRAY (in PE4) = ',CCWU_ARRAY0(1)
-!endif
-
-!IF ((mod(i,1000)==0).and.(my_task_id()==0)) then
-!        write(*,*) 'CCWU'
-!        write(*,*) size(CCWU_ARRAY0)
-!endif
    !-----------------------------------------------------------------------
 
    ! Everybody is doing this section, cycle if qc is bad
@@ -700,12 +755,15 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
    if (is_doing_vertical_conversion) &
       call set_vertical(base_obs_loc, vertvalue_obs_in_localization_coord, whichvert_obs_in_localization_coord)
 
+! CCWU
+
    ! Compute observation space increments for each group
    do group = 1, num_groups
       grp_bot = grp_beg(group); grp_top = grp_end(group)
-      call obs_increment(obs_prior(grp_bot:grp_top), grp_size, obs(1), &
-         obs_err_var, obs_inc(grp_bot:grp_top), inflate, my_inflate,   &
-         my_inflate_sd, net_a(group))
+      call obs_increment(obs_prior(grp_bot:grp_top), grp_size, &
+           inner_prior(1:ens_size*Ni), inner_current(1:ens_size*Ni), Ni, inner_index(1:Ni), &
+           obs(1), obs_err_var, obs_inc(grp_bot:grp_top), inflate, my_inflate,   &
+           my_inflate_sd, net_a(group))
 
       ! Also compute prior mean and variance of obs for efficiency here
       obs_prior_mean(group) = sum(obs_prior(grp_bot:grp_top)) / grp_size
@@ -808,6 +866,8 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
          endif
       end do OBS_UPDATE
    endif
+
+
 end do SEQUENTIAL_OBS
 
 ! Every pe needs to get the current my_inflate and my_inflate_sd back
@@ -900,8 +960,8 @@ end subroutine filter_assim
 
 !-------------------------------------------------------------
 
-subroutine obs_increment(ens_in, ens_size, obs, obs_var, obs_inc, &
-   inflate, my_cov_inflate, my_cov_inflate_sd, net_a)
+subroutine obs_increment(ens_in, ens_size, inner_p, inner_c, Ni, inner_ind, obs, obs_var, obs_inc, &
+   inflate, my_cov_inflate, my_cov_inflate_sd,  net_a)
 
 ! Given the ensemble prior for an observation, the observation, and
 ! the observation error variance, computes increments and adjusts
@@ -919,6 +979,30 @@ real(r8) :: prior_mean, prior_var, new_val(ens_size)
 integer  :: i, ens_index(ens_size), new_index(ens_size)
 
 real(r8) :: rel_weights(ens_size)
+
+! CCWU
+! PFF input and output
+! the size of inner_p (prior) and inner_c (current) should be (# inner domain
+! variable) * (# ens_size):
+integer,     intent(in):: Ni
+integer,     intent(in):: inner_ind(Ni)
+real(r8),    intent(in):: inner_p(Ni*ens_size), inner_c(Ni*ens_size) 
+real(r8) :: inner_pmatrix(Ni,ens_size),inner_cmatrix(Ni,ens_size), inner_inc(Ni,ens_size)
+integer  :: j
+
+! first reshape the input vector to the matrix form
+do i=1,Ni
+    do j=1,ens_size
+        inner_pmatrix(i,j) = inner_p(ens_size*(i-1)+j)
+        inner_cmatrix(i,j) = inner_c(ens_size*(i-1)+j)
+    enddo
+enddo
+
+!write(*,*) 'in obs_increment  pe =',my_task_id(),' inner_matrix (inner var 1, ens 1~5) = ',inner_p(1:5)
+
+!write(*,*) 'in obs_increment  pe =',my_task_id(),' inner_matrix (inner var 1, ens 1~5) = ',inner_pmatrix(1,1:5)
+!write(*,*) 'in obs_increment  pe =',my_task_id(),' inner_matrix (inner var 2, ens 1~5) = ',inner_pmatrix(2,1:5)
+
 
 ! Copy the input ensemble to something that can be modified
 ens = ens_in
@@ -975,6 +1059,8 @@ else if (prior_var == 0.0_r8) then
 
 else
 
+! CCWU (test PFF) SO...
+filter_kind = 9
    ! Call the appropriate filter option to compute increments for ensemble
    ! note that at this point we've taken care of the cases where either the
    ! obs_var or the prior_var is 0, so the individual routines no longer need
@@ -996,6 +1082,9 @@ else
       call obs_increment_boxcar(ens, ens_size, obs, obs_var, obs_inc, rel_weights)
    else if(filter_kind == 8) then
       call obs_increment_rank_histogram(ens, ens_size, prior_var, obs, obs_var, obs_inc)
+   else if(filter_kind == 9) then
+      call obs_increment_pff(ens, ens_size, inner_pmatrix, inner_cmatrix, inner_ind, Ni, obs, obs_var, inner_inc)
+
    else
       call error_handler(E_ERR,'obs_increment', &
               'Illegal value of filter_kind in assim_tools namelist [1-8 OK]', source)
@@ -1022,8 +1111,162 @@ endif
 
 ! Get the net change in spread if obs space inflation was used
 if(do_obs_inflate(inflate)) net_a = net_a * sqrt(my_cov_inflate)
-
 end subroutine obs_increment
+
+
+
+! CCWU subroutine PFF here:
+subroutine obs_increment_pff(ens, ens_size, inner_pmatrix, inner_cmatrix, inner_ind, Ni, obs, obs_var, inner_inc)
+!========================================================================
+!
+! PFF version of "inner domain" increment
+
+integer,  intent(in)  :: ens_size, Ni, inner_ind(Ni)
+real(r8), intent(in)  :: ens(ens_size), obs, obs_var
+real(r8), intent(in)  :: inner_pmatrix(Ni, ens_size), inner_cmatrix(Ni, ens_size)
+real(r8), intent(out) :: inner_inc(Ni, ens_size)
+
+! the following are temporary variables
+real(r8) :: kernel(Ni,ens_size, ens_size), prior_cov(Ni,Ni), prior_cov_inv(Ni,Ni)
+real(r8) :: kernel_width(Ni), prior_mean(Ni)
+integer  :: i,j,k
+real(r8) :: testinput(200,200), testinverse(200,200)
+
+! caluclate the prior mean, prior covariance matrix
+prior_mean = 0
+prior_mean = sum(inner_pmatrix,dim=2)/ens_size
+
+!write(*,*) 'prior var 1 = ', inner_pmatrix(1,:)
+!write(*,*) 'prior var 2 = ', inner_pmatrix(2,:)
+
+! prior covariance matrix (need to see how to localize!)
+do i=1,Ni
+do j=1,Ni
+    if (j.ge.i) then
+        prior_cov(i,j) = dot_product(inner_pmatrix(i,:)-prior_mean(i),inner_pmatrix(j,:)-prior_mean(j))/(ens_size-1)
+    else
+        prior_cov(i,j) = prior_cov(j,i)
+    endif
+enddo
+enddo
+
+!write(*,*) 'prior cov = ', prior_cov
+
+! also calculate the inverse of the prior covariance matrix 
+call inverse(prior_cov, prior_cov_inv, 2)
+
+! below is a test for the subroutine inverse
+!testinput = 0.0
+!do i=1,200
+!testinput(i,i) = 1.0_r8*i
+!enddo
+
+!call inverse(testinput, testinverse, 200)
+!write(*,*) 'testinput = ', testinput(1,1), testinput(2,2), testinput(100,100)
+!write(*,*) 'testinverse =', testinverse(1,1), testinverse(2,2),testinverse(200,200)
+
+! Calculate the BH^{T}_{j} R^{-1}(y-H(x_j)) and x_j - bar{x}
+! BH^{T}_{j}: we use the kernel trick (maybe in the future: consider linearized
+! observation operator?)
+! R^{-1}: for Gaussian obs error = 1/obs_var
+! y = obs
+! h(x) = ens
+! x_j = inner_cmatrix
+! bar{x} = prior_mean
+
+do i=1,Ni
+    
+enddo
+
+
+
+
+end subroutine obs_increment_pff
+
+
+
+subroutine inverse(a,c,n)
+!============================================================
+! Inverse matrix
+! Method: Based on Doolittle LU factorization for Ax=b
+! Alex G. December 2009
+!-----------------------------------------------------------
+! input ...
+! a(n,n) - array of coefficients for matrix A
+! n      - dimension
+! output ...
+! c(n,n) - inverse matrix of A
+! comments ...
+! the original matrix a(n,n) will be destroyed 
+! during the calculation
+!===========================================================
+implicit none 
+integer , intent(in) :: n
+real(r8), intent(inout) :: a(n,n)
+real(r8), intent(out):: c(n,n)
+real(r8):: L(n,n), U(n,n), b(n), d(n), x(n)
+real(r8):: coeff
+integer:: i, j, k
+
+! step 0: initialization for matrices L and U and b
+! Fortran 90/95 aloows such operations on matrices
+L=0.0_r8
+U=0.0_r8
+b=0.0_r8
+
+! step 1: forward elimination
+do k=1, n-1
+   do i=k+1,n
+      coeff=a(i,k)/a(k,k)
+      L(i,k) = coeff
+      do j=k+1,n
+         a(i,j) = a(i,j)-coeff*a(k,j)
+      end do
+   end do
+end do
+
+! Step 2: prepare L and U matrices 
+! L matrix is a matrix of the elimination coefficient
+! + the diagonal elements are 1.0
+do i=1,n
+  L(i,i) = 1.0
+end do
+! U matrix is the upper triangular part of A
+do j=1,n
+  do i=1,j
+    U(i,j) = a(i,j)
+  end do
+end do
+
+! Step 3: compute columns of the inverse matrix C
+do k=1,n
+  b(k)=1.0
+  d(1) = b(1)
+! Step 3a: Solve Ld=b using the forward substitution
+  do i=2,n
+    d(i)=b(i)
+    do j=1,i-1
+      d(i) = d(i) - L(i,j)*d(j)
+    end do
+  end do
+! Step 3b: Solve Ux=d using the back substitution
+  x(n)=d(n)/U(n,n)
+  do i = n-1,1,-1
+    x(i) = d(i)
+    do j=n,i+1,-1
+      x(i)=x(i)-U(i,j)*x(j)
+    end do
+    x(i) = x(i)/u(i,i)
+  end do
+! Step 3c: fill the solutions x(n) into column k of C
+  do i=1,n
+    c(i,k) = x(i)
+  end do
+  b(k)=0.0
+end do
+end subroutine inverse
+
+
 
 
 
