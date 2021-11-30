@@ -1129,6 +1129,11 @@ real(r8), intent(out) :: inner_inc(Ni, ens_size)
 ! the following are temporary variables
 real(r8) :: kernel(Ni,ens_size, ens_size), prior_cov(Ni,Ni), prior_cov_inv(Ni,Ni)
 real(r8) :: kernel_width(Ni), prior_mean(Ni)
+real(r8) :: obs_mean, inner_mean(Ni), BHT(Ni)
+real(r8) :: post_pdf(Ni, ens_size), like_pdf(Ni, ens_size), prir_pdf(Ni,ens_size)
+real(r8) :: ker_width(Ni)
+real(r8) :: ker_alpha
+real(r8) :: grad_ker(Ni, ens_size, ens_size)
 integer  :: i,j,k
 real(r8) :: testinput(200,200), testinverse(200,200)
 
@@ -1153,7 +1158,11 @@ enddo
 !write(*,*) 'prior cov = ', prior_cov
 
 ! also calculate the inverse of the prior covariance matrix 
-call inverse(prior_cov, prior_cov_inv, 2)
+
+! CAUTIOUS!! by calling the subroutine "inverse" might actually change the value of
+! prior_cov. Need to check the code for why?
+
+!call inverse(prior_cov, prior_cov_inv, 2)
 
 ! below is a test for the subroutine inverse
 !testinput = 0.0
@@ -1174,11 +1183,67 @@ call inverse(prior_cov, prior_cov_inv, 2)
 ! x_j = inner_cmatrix
 ! bar{x} = prior_mean
 
+
+! in the following, try to approximate BH^T by linear regression:
+obs_mean   = sum(ens)/ens_size                   ! mean of ens in the obs space
+inner_mean = sum(inner_cmatrix, dim=2)/ens_size  ! mean of ens in inner domain 
+
+!write(*,*) 'CCWU: obs = ', ens
+!write(*,*) 'CCWU: obs_mean =', obs_mean
+!write(*,*) 'CCWU: inner =', inner_cmatrix
+!write(*,*) 'CCWU: inner_mean = ', inner_mean
+
 do i=1,Ni
-    
+    BHT(i) =sum( ( ens - obs_mean )*( inner_cmatrix(i,:) - inner_mean(i) ) )/ ( ens_size - 1 )
 enddo
 
+!write(*,*) 'CCWU: pe',my_task_id(),'  BHT = ', BHT
 
+! in the following, calculate B*grad log posterior
+! This can be decomposed into B*(grad log likelihood + grad log prior)
+! Will denote as like_pdf + prir_pdf
+! where like_pdf = B*(grad log likelihood)
+!       prir_pdf = B*(grad log prior)
+
+do i=1,Ni
+    like_pdf(i,:) = BHT(i)*(ens-obs)/obs_var
+    prir_pdf(i,:) = inner_cmatrix(i,:)-prior_mean(i)
+enddo
+
+post_pdf = like_pdf + prir_pdf
+
+! in the following, do the matrix-kernel PFF for inner domain variables
+! note the kernels are calculated within the do-loops
+
+ker_alpha = 1/(1.0_r8*ens_size) ! tuning parameter
+
+!write(*,*) ker_alpha
+
+do i=1,Ni
+
+    ker_width(i) = prior_cov(i,i) ! kernel width
+
+    do j=1,ens_size
+         do k=1,ens_size
+             if (k.ge.j) then
+                 kernel(i,j,k)   = exp(-0.5*( inner_cmatrix(i,j) - inner_cmatrix(i,k))**2 /( ker_width(i)*ker_alpha ) )
+                 grad_ker(i,j,k) = ( inner_cmatrix(i,j) - inner_cmatrix(i,k) )/( ker_width(i)*ker_alpha )*kernel(i,j,k) 
+             else
+                 kernel(i,j,k)   = kernel(i,k,j)
+                 grad_ker(i,j,k) = -grad_ker(i,k,j)
+             endif
+         enddo
+    enddo
+enddo
+
+!if (my_task_id() ==0) then
+!write(*,*) 'CCWU: inner cmatrix1 = ', inner_cmatrix(1,:)
+!write(*,*) 'CCWU: inner cmatrix2 = ', inner_cmatrix(2,:)
+
+!write(*,*) 'CCWU :: B = ', prior_cov
+!write(*,*) 'CCWU:  pe', my_task_id(), '  kernel(1,4,:) = ', kernel(1,4,:)
+!write(*,*) 'CCWU:  pe', my_task_id(), '  kernel(2,4,:) = ', kernel(2,4,:) 
+!endif
 
 
 end subroutine obs_increment_pff
