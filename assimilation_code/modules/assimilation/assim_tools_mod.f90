@@ -313,7 +313,7 @@ subroutine filter_assim(ens_handle, obs_ens_handle, obs_seq, keys,           &
    ens_size, num_groups, obs_val_index, inflate, ENS_MEAN_COPY, ENS_SD_COPY, &
    ENS_INF_COPY, ENS_INF_SD_COPY, OBS_KEY_COPY, OBS_GLOBAL_QC_COPY,          &
    OBS_PRIOR_MEAN_START, OBS_PRIOR_MEAN_END, OBS_PRIOR_VAR_START,            &
-   OBS_PRIOR_VAR_END, inflate_only)
+   OBS_PRIOR_VAR_END, inflate_only, iter)
 
 type(ensemble_type),         intent(inout) :: ens_handle, obs_ens_handle
 type(obs_sequence_type),     intent(in)    :: obs_seq
@@ -388,6 +388,8 @@ logical :: local_obs_inflate
 integer, allocatable :: n_close_state_items(:), n_close_obs_items(:)
 
 ! CCWU:
+integer, intent(in), optional :: iter ! the PFF iteration
+
 ! the index for inner domain variables that temporarily stored for broadcasting
 ! the size will vary; based on the size of inner domain for each obs
 integer  :: inner_index(max_ni)
@@ -763,7 +765,7 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
       call obs_increment(obs_prior(grp_bot:grp_top), grp_size, &
            inner_prior(1:ens_size*Ni), inner_current(1:ens_size*Ni), Ni, inner_index(1:Ni), &
            obs(1), obs_err_var, obs_inc(grp_bot:grp_top), inflate, my_inflate,   &
-           my_inflate_sd, net_a(group))
+           my_inflate_sd, net_a(group), iter)
 
       ! Also compute prior mean and variance of obs for efficiency here
       obs_prior_mean(group) = sum(obs_prior(grp_bot:grp_top)) / grp_size
@@ -961,7 +963,7 @@ end subroutine filter_assim
 !-------------------------------------------------------------
 
 subroutine obs_increment(ens_in, ens_size, inner_p, inner_c, Ni, inner_ind, obs, obs_var, obs_inc, &
-   inflate, my_cov_inflate, my_cov_inflate_sd,  net_a)
+   inflate, my_cov_inflate, my_cov_inflate_sd,  net_a, iter)
 
 ! Given the ensemble prior for an observation, the observation, and
 ! the observation error variance, computes increments and adjusts
@@ -984,6 +986,7 @@ real(r8) :: rel_weights(ens_size)
 ! PFF input and output
 ! the size of inner_p (prior) and inner_c (current) should be (# inner domain
 ! variable) * (# ens_size):
+integer,     intent(in), optional :: iter
 integer,     intent(in):: Ni
 integer,     intent(in):: inner_ind(Ni)
 real(r8),    intent(in):: inner_p(Ni*ens_size), inner_c(Ni*ens_size) 
@@ -1083,8 +1086,8 @@ filter_kind = 9
    else if(filter_kind == 8) then
       call obs_increment_rank_histogram(ens, ens_size, prior_var, obs, obs_var, obs_inc)
    else if(filter_kind == 9) then
-      call obs_increment_pff(ens, ens_size, inner_pmatrix, inner_cmatrix, inner_ind, Ni, obs, obs_var, inner_inc)
-
+      call obs_increment_pff(iter, ens, ens_size, inner_pmatrix, inner_cmatrix, inner_ind, Ni, obs, obs_var, inner_inc)
+      obs_inc = inner_inc(1,:)
    else
       call error_handler(E_ERR,'obs_increment', &
               'Illegal value of filter_kind in assim_tools namelist [1-8 OK]', source)
@@ -1116,23 +1119,24 @@ end subroutine obs_increment
 
 
 ! CCWU subroutine PFF here:
-subroutine obs_increment_pff(ens, ens_size, inner_pmatrix, inner_cmatrix, inner_ind, Ni, obs, obs_var, inner_inc)
+subroutine obs_increment_pff(iter, ens, ens_size, inner_pmatrix, inner_cmatrix, inner_ind, Ni, obs, obs_var, inner_inc)
 !========================================================================
 !
 ! PFF version of "inner domain" increment
 
 integer,  intent(in)  :: ens_size, Ni, inner_ind(Ni)
+integer,  intent(in)  :: iter                         ! the iteration index
 real(r8), intent(in)  :: ens(ens_size), obs, obs_var
 real(r8), intent(in)  :: inner_pmatrix(Ni, ens_size), inner_cmatrix(Ni, ens_size)
 real(r8), intent(out) :: inner_inc(Ni, ens_size)
 
 ! the following are temporary variables
-real(r8) :: kernel(Ni,ens_size, ens_size), prior_cov(Ni,Ni), prior_cov_inv(Ni,Ni)
+real(r8) :: kernel(Ni,ens_size, ens_size), prior_cov(Ni,Ni), prior_cov_inv(Ni,Ni), input_inverse(Ni,Ni)
 real(r8) :: kernel_width(Ni), prior_mean(Ni)
-real(r8) :: obs_mean, inner_mean(Ni), BHT(Ni)
+real(r8) :: obs_mean, inner_mean(Ni), HT(Ni, ens_size)
 real(r8) :: post_pdf(Ni, ens_size), like_pdf(Ni, ens_size), prir_pdf(Ni,ens_size)
 real(r8) :: ker_width(Ni)
-real(r8) :: ker_alpha
+real(r8) :: ker_alpha, eps
 real(r8) :: grad_ker(Ni, ens_size, ens_size)
 integer  :: i,j,k
 real(r8) :: testinput(200,200), testinverse(200,200)
@@ -1140,9 +1144,6 @@ real(r8) :: testinput(200,200), testinverse(200,200)
 ! caluclate the prior mean, prior covariance matrix
 prior_mean = 0
 prior_mean = sum(inner_pmatrix,dim=2)/ens_size
-
-!write(*,*) 'prior var 1 = ', inner_pmatrix(1,:)
-!write(*,*) 'prior var 2 = ', inner_pmatrix(2,:)
 
 ! prior covariance matrix (need to see how to localize!)
 do i=1,Ni
@@ -1155,14 +1156,16 @@ do j=1,Ni
 enddo
 enddo
 
-!write(*,*) 'prior cov = ', prior_cov
 
-! also calculate the inverse of the prior covariance matrix 
-
+! calculate the inverse of prior covariance matrix:
 ! CAUTIOUS!! by calling the subroutine "inverse" might actually change the value of
 ! prior_cov. Need to check the code for why?
 
-!call inverse(prior_cov, prior_cov_inv, 2)
+input_inverse = prior_cov ! input_inverse is a dummy variable that passes prior_cov to the inverse
+!write(*,*) prior_cov, input_inverse
+
+call inverse(input_inverse, prior_cov_inv, 2)
+!write(*,*) prior_cov, input_inverse
 
 ! below is a test for the subroutine inverse
 !testinput = 0.0
@@ -1185,19 +1188,22 @@ enddo
 
 
 ! in the following, try to approximate BH^T by linear regression:
-obs_mean   = sum(ens)/ens_size                   ! mean of ens in the obs space
-inner_mean = sum(inner_cmatrix, dim=2)/ens_size  ! mean of ens in inner domain 
+!obs_mean   = sum(ens)/ens_size                   ! mean of ens in the obs space
+!inner_mean = sum(inner_cmatrix, dim=2)/ens_size  ! mean of ens in inner domain 
 
-!write(*,*) 'CCWU: obs = ', ens
-!write(*,*) 'CCWU: obs_mean =', obs_mean
-!write(*,*) 'CCWU: inner =', inner_cmatrix
-!write(*,*) 'CCWU: inner_mean = ', inner_mean
+!do i=1,Ni
+!    BHT(i) =sum( ( ens - obs_mean )*( inner_cmatrix(i,:) - inner_mean(i) ) )/ ( ens_size - 1 )
+!enddo
 
+
+! in the following (ONLY APPLIED for square obs at state variable grids)
 do i=1,Ni
-    BHT(i) =sum( ( ens - obs_mean )*( inner_cmatrix(i,:) - inner_mean(i) ) )/ ( ens_size - 1 )
+    do j=1,ens_size
+        HT(i,j) = 1
+!        HT(i,j) = 2*inner_cmatrix(i,j)
+    enddo
 enddo
 
-!write(*,*) 'CCWU: pe',my_task_id(),'  BHT = ', BHT
 
 ! in the following, calculate B*grad log posterior
 ! This can be decomposed into B*(grad log likelihood + grad log prior)
@@ -1206,8 +1212,10 @@ enddo
 !       prir_pdf = B*(grad log prior)
 
 do i=1,Ni
-    like_pdf(i,:) = BHT(i)*(ens-obs)/obs_var
-    prir_pdf(i,:) = inner_cmatrix(i,:)-prior_mean(i)
+    do j=1,ens_size
+        like_pdf(i,j) = dot_product(prior_cov(:,i),HT(:,j))*(obs-ens(j))/obs_var
+        prir_pdf(i,j) = -( inner_cmatrix(i,j)-prior_mean(i) )
+    enddo
 enddo
 
 post_pdf = like_pdf + prir_pdf
@@ -1216,15 +1224,18 @@ post_pdf = like_pdf + prir_pdf
 ! note the kernels are calculated within the do-loops
 
 ker_alpha = 1/(1.0_r8*ens_size) ! tuning parameter
-
-!write(*,*) ker_alpha
+eps       = 0.05 ! the pseudo time step
 
 do i=1,Ni
 
     ker_width(i) = prior_cov(i,i) ! kernel width
 
     do j=1,ens_size
+        
+         inner_inc(i,j) = 0.0_r8
+
          do k=1,ens_size
+
              if (k.ge.j) then
                  kernel(i,j,k)   = exp(-0.5*( inner_cmatrix(i,j) - inner_cmatrix(i,k))**2 /( ker_width(i)*ker_alpha ) )
                  grad_ker(i,j,k) = ( inner_cmatrix(i,j) - inner_cmatrix(i,k) )/( ker_width(i)*ker_alpha )*kernel(i,j,k) 
@@ -1232,18 +1243,28 @@ do i=1,Ni
                  kernel(i,j,k)   = kernel(i,k,j)
                  grad_ker(i,j,k) = -grad_ker(i,k,j)
              endif
+ 
+         inner_inc(i,j) = inner_inc(i,j) + eps*( kernel(i,j,k)*post_pdf(i,k) + dot_product(prior_cov(i,:),grad_ker(:,j,k)) )/(1.0_r8*ens_size)
+            
          enddo
     enddo
 enddo
 
-!if (my_task_id() ==0) then
-!write(*,*) 'CCWU: inner cmatrix1 = ', inner_cmatrix(1,:)
-!write(*,*) 'CCWU: inner cmatrix2 = ', inner_cmatrix(2,:)
+if (my_task_id() ==0) then
 
+write(*,*) 'CCWU pff iteration ', iter
+write(*,*) 'CCWU x = ', inner_cmatrix
+!write(*,*) 'CCWU H(x) = ', ens
+write(*,*) 'CCWU obs = ', obs
+!write(*,*) 'CCWU obs_var = ', obs_var
+!write(*,*) 'CCWU ker (1,2,:) =', kernel(1,2,:)
+!write(*,*) 'CCWU: grad_ker(1,4,:) = ', grad_ker(1,4,:)
+!write(*,*) 'CCWU: grad_ker(2,4,:) = ', grad_ker(2,4,:)
+!write(*,*) 'CCWU ker_width = ', ker_width
+!write(*,*) 'CCWU post_pdf = ', post_pdf
+!write(*,*) 'CCWU inner_inc = ', inner_inc
 !write(*,*) 'CCWU :: B = ', prior_cov
-!write(*,*) 'CCWU:  pe', my_task_id(), '  kernel(1,4,:) = ', kernel(1,4,:)
-!write(*,*) 'CCWU:  pe', my_task_id(), '  kernel(2,4,:) = ', kernel(2,4,:) 
-!endif
+endif
 
 
 end subroutine obs_increment_pff

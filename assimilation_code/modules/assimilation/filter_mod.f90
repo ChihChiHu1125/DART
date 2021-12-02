@@ -366,6 +366,9 @@ logical :: ds, all_gone, allow_missing
 ! real(r8), allocatable   :: temp_ens(:) ! for smoother
 real(r8), allocatable   :: prior_qc_copy(:)
 
+! CCWU:
+integer :: iter ! the iteration for PFF
+
 call filter_initialize_modules_used() ! static_init_model called in here
 
 ! Read the namelist entry
@@ -877,6 +880,10 @@ AdvanceTime : do
    ! allocate() space for the prior qc copy
    call allocate_single_copy(obs_fwd_op_ens_handle, prior_qc_copy)
 
+! CCWU: NEED TO CHECK
+! The start of PFF iteration
+iter = 1
+do while (iter.le.5)
    call get_obs_ens_distrib_state(state_ens_handle, obs_fwd_op_ens_handle, &
            qc_ens_handle, seq, keys, obs_val_index, input_qc_index, &
            OBS_ERR_VAR_COPY, OBS_VAL_COPY, OBS_KEY_COPY, OBS_GLOBAL_QC_COPY, &
@@ -940,11 +947,14 @@ AdvanceTime : do
       ENS_MEAN_COPY, ENS_SD_COPY, &
       PRIOR_INF_COPY, PRIOR_INF_SD_COPY, OBS_KEY_COPY, OBS_GLOBAL_QC_COPY, &
       OBS_MEAN_START, OBS_MEAN_END, OBS_VAR_START, &
-      OBS_VAR_END, inflate_only = .false.)
+      OBS_VAR_END, inflate_only = .false., iter=iter)
 
 ! CCWU:
 ! PFF clear info in the inner domain
    call clear_inner_domain
+
+   iter = iter + 1
+ENDDO ! PFF iteration
 
    call timestamp_message('After  observation assimilation')
    call     trace_message('After  observation assimilation')
