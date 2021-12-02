@@ -313,7 +313,7 @@ subroutine filter_assim(ens_handle, obs_ens_handle, obs_seq, keys,           &
    ens_size, num_groups, obs_val_index, inflate, ENS_MEAN_COPY, ENS_SD_COPY, &
    ENS_INF_COPY, ENS_INF_SD_COPY, OBS_KEY_COPY, OBS_GLOBAL_QC_COPY,          &
    OBS_PRIOR_MEAN_START, OBS_PRIOR_MEAN_END, OBS_PRIOR_VAR_START,            &
-   OBS_PRIOR_VAR_END, inflate_only, iter)
+   OBS_PRIOR_VAR_END, inflate_only, iter, pinner)
 
 type(ensemble_type),         intent(inout) :: ens_handle, obs_ens_handle
 type(obs_sequence_type),     intent(in)    :: obs_seq
@@ -388,7 +388,8 @@ logical :: local_obs_inflate
 integer, allocatable :: n_close_state_items(:), n_close_obs_items(:)
 
 ! CCWU:
-integer, intent(in), optional :: iter ! the PFF iteration
+integer,  intent(in), optional :: iter ! the PFF iteration
+real(r8), intent(in), optional :: pinner(:,:,:) ! prior in inner domain
 
 ! the index for inner domain variables that temporarily stored for broadcasting
 ! the size will vary; based on the size of inner domain for each obs
@@ -688,10 +689,18 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
       ! Put the ensemble info of state variables for inner domain:
 
       ! prior values
+      !if (iter.eq.1) then
+      !do jj = 1, Ni
+      !     call get_var_ens_inner_domain(owners_index, jj, inner_prior(ens_size*(jj-1)+1: ens_size*jj))
+      !enddo
+      !endif
+
       do jj = 1, Ni
-           call get_var_ens_inner_domain(owners_index, jj, inner_prior(ens_size*(jj-1)+1: ens_size*jj))
+          inner_prior(ens_size*(jj-1)+1: ens_size*jj) = pinner(:,jj,owners_index)
       enddo
 
+      !write(*,*) 'CCWU pinner = ', pinner(:,1:Ni,:)
+      !write(*,*) 'CCWU inner_prior = ', inner_prior(1:ens_size*Ni)      
 
       ! current values
       do jj = 1, Ni
@@ -1253,9 +1262,10 @@ enddo
 if (my_task_id() ==0) then
 
 write(*,*) 'CCWU pff iteration ', iter
+write(*,*) 'CCWU prior = ', inner_pmatrix
 write(*,*) 'CCWU x = ', inner_cmatrix
 !write(*,*) 'CCWU H(x) = ', ens
-write(*,*) 'CCWU obs = ', obs
+!write(*,*) 'CCWU obs = ', obs
 !write(*,*) 'CCWU obs_var = ', obs_var
 !write(*,*) 'CCWU ker (1,2,:) =', kernel(1,2,:)
 !write(*,*) 'CCWU: grad_ker(1,4,:) = ', grad_ker(1,4,:)
