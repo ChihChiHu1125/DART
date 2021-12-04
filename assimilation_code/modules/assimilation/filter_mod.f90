@@ -372,6 +372,7 @@ integer :: iter ! the iteration for PFF
 integer :: n_my_obs, n_my_ens, n_inner
 integer :: jj, nobs, Ni
 real(r8), allocatable :: inner_prior(:,:,:)
+real(r8), allocatable :: state_prior(:,:)
 real(r8), allocatable :: output(:) 
 
 call filter_initialize_modules_used() ! static_init_model called in here
@@ -890,6 +891,8 @@ AdvanceTime : do
 ! The start of PFF iteration
 iter = 1
 do while (iter.le.100)
+
+   write(*,*) 'PFF iteration ', iter
    call get_obs_ens_distrib_state(state_ens_handle, obs_fwd_op_ens_handle, &
            qc_ens_handle, seq, keys, obs_val_index, input_qc_index, &
            OBS_ERR_VAR_COPY, OBS_VAL_COPY, OBS_KEY_COPY, OBS_GLOBAL_QC_COPY, &
@@ -908,6 +911,8 @@ do while (iter.le.100)
       n_my_ens = ens_size
       n_inner  = 50 ! this should be max_ni in assim_tools_mod.f90
 
+      state_prior = state_ens_handle%copies(1:ens_size,:)
+
       allocate(inner_prior(n_my_ens, n_inner, n_my_obs))
       allocate(output(50))
 
@@ -921,7 +926,7 @@ do while (iter.le.100)
             inner_prior(:, jj, nobs) = output
          enddo
 
-      ENDDO
+      END DO
 
    endif
 
@@ -965,9 +970,10 @@ do while (iter.le.100)
            OBS_VAL_COPY, OBS_ERR_VAR_COPY, DART_qc_index, compute_posterior)
    call trace_message('After  observation space diagnostics')
 
-
-   write(msgstring, '(A,I8,A)') 'Ready to assimilate up to', size(keys), ' observations'
-   call trace_message(msgstring, 'filter:', -1)
+   if (iter.eq.1) then
+      write(msgstring, '(A,I8,A)') 'Ready to assimilate up to', size(keys), ' observations'
+      call trace_message(msgstring, 'filter:', -1)
+   endif
 
    call     trace_message('Before observation assimilation')
    call timestamp_message('Before observation assimilation')
@@ -977,9 +983,12 @@ do while (iter.le.100)
       ENS_MEAN_COPY, ENS_SD_COPY, &
       PRIOR_INF_COPY, PRIOR_INF_SD_COPY, OBS_KEY_COPY, OBS_GLOBAL_QC_COPY, &
       OBS_MEAN_START, OBS_MEAN_END, OBS_VAR_START, &
-      OBS_VAR_END, inflate_only = .false., iter=iter, pinner=inner_prior)
+      OBS_VAR_END, inflate_only = .false., iter=iter, &
+      pinner=inner_prior, pstate=state_prior)
 
 ! CCWU:
+! write out some diagnostics
+
 ! PFF clear info in the inner domain
 
    call clear_inner_domain

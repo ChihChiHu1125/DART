@@ -313,7 +313,7 @@ subroutine filter_assim(ens_handle, obs_ens_handle, obs_seq, keys,           &
    ens_size, num_groups, obs_val_index, inflate, ENS_MEAN_COPY, ENS_SD_COPY, &
    ENS_INF_COPY, ENS_INF_SD_COPY, OBS_KEY_COPY, OBS_GLOBAL_QC_COPY,          &
    OBS_PRIOR_MEAN_START, OBS_PRIOR_MEAN_END, OBS_PRIOR_VAR_START,            &
-   OBS_PRIOR_VAR_END, inflate_only, iter, pinner)
+   OBS_PRIOR_VAR_END, inflate_only, iter, pinner, pstate)
 
 type(ensemble_type),         intent(inout) :: ens_handle, obs_ens_handle
 type(obs_sequence_type),     intent(in)    :: obs_seq
@@ -390,12 +390,14 @@ integer, allocatable :: n_close_state_items(:), n_close_obs_items(:)
 ! CCWU:
 integer,  intent(in), optional :: iter ! the PFF iteration
 real(r8), intent(in), optional :: pinner(:,:,:) ! prior in inner domain
+real(r8), intent(in), optional :: pstate(:,:) ! prior for state variables
+
 
 ! the index for inner domain variables that temporarily stored for broadcasting
 ! the size will vary; based on the size of inner domain for each obs
 integer  :: inner_index(max_ni)
 real(r8) :: inner_index_r8(max_ni) ! temporay storage for index in real number
-
+real(r8), allocatable :: inner_inc(:,:)
 
 ! the ensemble information for inner doamin variables temporarily stored for
 ! broadcasting. There are two blocks: one for current pseudo time step, the
@@ -406,7 +408,9 @@ real(r8) :: inner_prior(max_ni*ens_size), inner_current(max_ni*ens_size)
 
 integer :: Ni    ! the size of inner domain
 real(r8):: Ni_r8 ! the real(Ni)
-integer :: jj ! dummy variable
+integer :: jj, inner,cc ! dummy variable
+integer :: n_total_obs ! total number of global obs
+character :: output_name*50
 
 ! Just to make sure multiple tasks are running for tests
 ! CCWU:
@@ -707,6 +711,24 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
            call get_var_ens_inner_domain(owners_index, jj, inner_current(ens_size*(jj-1)+1: ens_size*jj))
       enddo
 
+      ! CCWU: save inner domain variables:
+      if (my_task_id().eq.0) then
+
+         n_total_obs = obs_ens_handle%num_vars
+
+         if ((iter.eq.1).and.(i.eq.1)) then
+            ! open a new file:
+            !output_name='./output/PFF_linear_two_obs_x.dat'
+            !output_name='./output/PFF_linear_two_obs_unobs_x.dat'
+            !open(12,file=output_name,status='new',form='unformatted',access='direct',recl=4*Ni*ens_size)
+         endif
+
+         !write(12, rec=n_total_obs*(iter-1)+i ) inner_current(1:Ni*ens_size)
+         !write(12, rec=n_total_obs*(iter-1)+i ) ens_handle%copies(2,1:ens_size)
+         write(*,*) sum(ens_handle%copies(2,1:ens_size))/ens_size
+      end if
+
+
 !      write(*,*) '(sent obs',i,') pe =',my_task_id(),' Ni =', Ni
 !      write(*,*) '(sent obs',i,') pe =',my_task_id(),' inner_index = ', inner_index(1:Ni)
 
@@ -768,13 +790,15 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
 
 ! CCWU
 
+allocate(inner_inc(ens_size, Ni))
+
    ! Compute observation space increments for each group
    do group = 1, num_groups
       grp_bot = grp_beg(group); grp_top = grp_end(group)
       call obs_increment(obs_prior(grp_bot:grp_top), grp_size, &
            inner_prior(1:ens_size*Ni), inner_current(1:ens_size*Ni), Ni, inner_index(1:Ni), &
            obs(1), obs_err_var, obs_inc(grp_bot:grp_top), inflate, my_inflate,   &
-           my_inflate_sd, net_a(group), iter)
+           my_inflate_sd, net_a(group), iter, inner_inc)
 
       ! Also compute prior mean and variance of obs for efficiency here
       obs_prior_mean(group) = sum(obs_prior(grp_bot:grp_top)) / grp_size
@@ -826,57 +850,121 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
    !call test_close_obs_dist(close_state_dist, num_close_states, i)
 
    ! Loop through to update each of my state variables that is potentially close
+
+   INNER_DOMAIN_INC: do inner = 1, Ni
+
+         ! For PFF (the following should be the inner domain update):
+         obs_prior = inner_prior(ens_size*(inner-1)+1: ens_size*inner)
+         obs_inc   = inner_inc(:, inner)
+
+         obs_prior_mean = sum( obs_prior )/(1.0_r8*ens_size)
+         obs_prior_var = 0.0_r8
+         do cc = 1, ens_size
+            obs_prior_var = obs_prior_var + (obs_prior(cc)-obs_prior_mean)**2 / (1.0_r8*ens_size-1)
+         enddo
+!         obs_prior_var  = sum( (obs_prior - obs_prior_mean)**2 )/(1.0_r8*ens_size-1)
+
+! not sure why the below does not work...
+!         write(*,*) 'obs_prior - mean  = ', obs_prior - obs_prior_mean
+
+!         write(*,*) 'mean =', obs_prior_mean, 'variance = ', obs_prior_var
+         ! Need to modify below espeically for non-local observations
+         !base_obs_loc   =
+         !base_obs_type  =
+         !close_state_dist(j) =
+   !write(*,*) 'obs_prior = ',obs_prior
+   !write(*,*) 'obs_prior_mean = ', obs_prior_mean
+   !write(*,*) 'obs_prior_var = ', obs_prior_var
+
    STATE_UPDATE: do j = 1, num_close_states
-      state_index = close_state_ind(j)
+         state_index = close_state_ind(j)
 
-      if ( allow_missing_in_state ) then
-         ! Don't allow update of state ensemble with any missing values
-         if (any(ens_handle%copies(1:ens_size, state_index) == MISSING_R8)) cycle STATE_UPDATE
-      endif
-
-      call obs_updates_ens(ens_size, num_groups, ens_handle%copies(1:ens_size, state_index), &
-         updated_ens, my_state_loc(state_index), my_state_kind(state_index), obs_prior, obs_inc, &
-         obs_prior_mean, obs_prior_var, base_obs_loc, base_obs_type, obs_time, &
-         close_state_dist(j), cutoff_rev, net_a, adjust_obs_impact, obs_impact_table, &
-         grp_size, grp_beg, grp_end, i, my_state_indx(state_index), final_factor, correl)
-
-      ! If doing full assimilation, update the state variable ensemble with weighted increments
-      if(.not. inflate_only) ens_handle%copies(1:ens_size, state_index) = updated_ens
-
-      ! Compute spatially-varying state space inflation
-      if(local_varying_ss_inflate .and. final_factor > 0.0_r8) then
-         do group = 1, num_groups
-            call update_varying_state_space_inflation(inflate,                     &
-               ens_handle%copies(ENS_INF_COPY, state_index),                       &
-               ens_handle%copies(ENS_INF_SD_COPY, state_index),                    &
-               ens_handle%copies(ENS_SD_COPY, state_index),                        &
-               orig_obs_prior_mean(group), orig_obs_prior_var(group), obs(1),      &
-               obs_err_var, grp_size, final_factor, correl(group), inflate_only)
-         end do
-      endif
-   end do STATE_UPDATE
-
-   if(.not. inflate_only) then
-      ! Now everybody updates their obs priors (only ones after this one)
-      OBS_UPDATE: do j = 1, num_close_obs
-         obs_index = close_obs_ind(j)
-
-         ! Only have to update obs that have not yet been used
-         if(my_obs_indx(obs_index) > i) then
-
-            ! If forward observation operator failed, no need to update unassimilated observations
-            if (any(obs_ens_handle%copies(1:ens_size, obs_index) == MISSING_R8)) cycle OBS_UPDATE
-
-            call obs_updates_ens(ens_size, num_groups, obs_ens_handle%copies(1:ens_size, obs_index), &
-               updated_ens, my_obs_loc(obs_index), my_obs_kind(obs_index), obs_prior, obs_inc, &
-               obs_prior_mean, obs_prior_var, base_obs_loc, base_obs_type, obs_time, &
-               close_obs_dist(j), cutoff_rev, net_a, adjust_obs_impact, obs_impact_table, &
-               grp_size, grp_beg, grp_end, i, -1*my_obs_indx(obs_index), final_factor, correl)
-
-            obs_ens_handle%copies(1:ens_size, obs_index) = updated_ens
+         if ( allow_missing_in_state ) then
+            ! Don't allow update of state ensemble with any missing values
+            if (any(ens_handle%copies(1:ens_size, state_index) == MISSING_R8)) cycle STATE_UPDATE
          endif
-      end do OBS_UPDATE
-   endif
+
+         call obs_updates_ens(ens_size, num_groups, ens_handle%copies(1:ens_size, state_index), &
+            updated_ens, my_state_loc(state_index), my_state_kind(state_index), obs_prior, obs_inc, &
+            obs_prior_mean, obs_prior_var, base_obs_loc, base_obs_type, obs_time, &
+            close_state_dist(j), cutoff_rev, net_a, adjust_obs_impact, obs_impact_table, &
+            grp_size, grp_beg, grp_end, i, my_state_indx(state_index), final_factor, correl, pstate(:,state_index))
+
+         ! If doing full assimilation, update the state variable ensemble with weighted increments
+         if(.not. inflate_only) ens_handle%copies(1:ens_size, state_index) = updated_ens
+
+         ! Compute spatially-varying state space inflation
+         if(local_varying_ss_inflate .and. final_factor > 0.0_r8) then
+            do group = 1, num_groups
+               call update_varying_state_space_inflation(inflate,                     &
+                  ens_handle%copies(ENS_INF_COPY, state_index),                       &
+                  ens_handle%copies(ENS_INF_SD_COPY, state_index),                    &
+                  ens_handle%copies(ENS_SD_COPY, state_index),                        &
+                  orig_obs_prior_mean(group), orig_obs_prior_var(group), obs(1),      &
+                  obs_err_var, grp_size, final_factor, correl(group), inflate_only)
+            end do
+         endif
+
+      end do STATE_UPDATE
+   end do INNER_DOMAIN_INC
+
+   deallocate(inner_inc)
+!
+! BELOW is the original DART code (use obs_inc to update states)
+!
+!   ! Loop through to update each of my state variables that is potentially close
+!   STATE_UPDATE: do j = 1, num_close_states
+!      state_index = close_state_ind(j)
+!
+!      if ( allow_missing_in_state ) then
+!         ! Don't allow update of state ensemble with any missing values
+!         if (any(ens_handle%copies(1:ens_size, state_index) == MISSING_R8)) cycle STATE_UPDATE
+!      endif
+!
+!      call obs_updates_ens(ens_size, num_groups, ens_handle%copies(1:ens_size, state_index), &
+!         updated_ens, my_state_loc(state_index), my_state_kind(state_index), obs_prior, obs_inc, &
+!         obs_prior_mean, obs_prior_var, base_obs_loc, base_obs_type, obs_time, &
+!         close_state_dist(j), cutoff_rev, net_a, adjust_obs_impact, obs_impact_table, &
+!         grp_size, grp_beg, grp_end, i, my_state_indx(state_index), final_factor, correl)
+!
+!      ! If doing full assimilation, update the state variable ensemble with
+!      ! weighted increments
+!      if(.not. inflate_only) ens_handle%copies(1:ens_size, state_index) = updated_ens
+!
+!      ! Compute spatially-varying state space inflation
+!      if(local_varying_ss_inflate .and. final_factor > 0.0_r8) then
+!         do group = 1, num_groups
+!            call update_varying_state_space_inflation(inflate, &
+!               ens_handle%copies(ENS_INF_COPY, state_index), &
+!               ens_handle%copies(ENS_INF_SD_COPY, state_index), &
+!               ens_handle%copies(ENS_SD_COPY, state_index), &
+!               orig_obs_prior_mean(group), orig_obs_prior_var(group), obs(1), &
+!               obs_err_var, grp_size, final_factor, correl(group), inflate_only)
+!         end do
+!      endif
+!   end do STATE_UPDATE
+!
+!   if(.not. inflate_only) then
+!      ! Now everybody updates their obs priors (only ones after this one)
+!      OBS_UPDATE: do j = 1, num_close_obs
+!         obs_index = close_obs_ind(j)
+!
+!         ! Only have to update obs that have not yet been used
+!         if(my_obs_indx(obs_index) > i) then
+!
+!            ! If forward observation operator failed, no need to update unassimilated observations
+!            if (any(obs_ens_handle%copies(1:ens_size, obs_index) == MISSING_R8)) cycle OBS_UPDATE
+!
+!            call obs_updates_ens(ens_size, num_groups, obs_ens_handle%copies(1:ens_size, obs_index), &
+!               updated_ens, my_obs_loc(obs_index), my_obs_kind(obs_index), obs_prior, obs_inc, &
+!               obs_prior_mean, obs_prior_var, base_obs_loc, base_obs_type, obs_time, &
+!               close_obs_dist(j), cutoff_rev, net_a, adjust_obs_impact, obs_impact_table, &
+!               grp_size, grp_beg, grp_end, i, -1*my_obs_indx(obs_index), final_factor, correl)
+!
+!            obs_ens_handle%copies(1:ens_size, obs_index) = updated_ens
+!         endif
+!      end do OBS_UPDATE
+!   endif
 
 
 end do SEQUENTIAL_OBS
@@ -913,9 +1001,12 @@ call get_close_destroy(gc_obs)
 
 ! Assure user we have done something
 if (print_trace_details >= 0) then
+
+if (iter.eq.1) then
 write(msgstring, '(A,I8,A)') &
    'Processed', obs_ens_handle%num_vars, ' total observations'
    call error_handler(E_MSG,'filter_assim:',msgstring)
+endif
 endif
 
 ! diagnostics for stats on saving calls by remembering obs at the same location.
@@ -972,7 +1063,7 @@ end subroutine filter_assim
 !-------------------------------------------------------------
 
 subroutine obs_increment(ens_in, ens_size, inner_p, inner_c, Ni, inner_ind, obs, obs_var, obs_inc, &
-   inflate, my_cov_inflate, my_cov_inflate_sd,  net_a, iter)
+   inflate, my_cov_inflate, my_cov_inflate_sd,  net_a, iter, inner_inc)
 
 ! Given the ensemble prior for an observation, the observation, and
 ! the observation error variance, computes increments and adjusts
@@ -999,7 +1090,8 @@ integer,     intent(in), optional :: iter
 integer,     intent(in):: Ni
 integer,     intent(in):: inner_ind(Ni)
 real(r8),    intent(in):: inner_p(Ni*ens_size), inner_c(Ni*ens_size) 
-real(r8) :: inner_pmatrix(Ni,ens_size),inner_cmatrix(Ni,ens_size), inner_inc(Ni,ens_size)
+real(r8),   intent(out), optional :: inner_inc(Ni, ens_size)
+real(r8) :: inner_pmatrix(Ni,ens_size),inner_cmatrix(Ni,ens_size)
 integer  :: j
 
 ! first reshape the input vector to the matrix form
@@ -1096,7 +1188,6 @@ filter_kind = 9
       call obs_increment_rank_histogram(ens, ens_size, prior_var, obs, obs_var, obs_inc)
    else if(filter_kind == 9) then
       call obs_increment_pff(iter, ens, ens_size, inner_pmatrix, inner_cmatrix, inner_ind, Ni, obs, obs_var, inner_inc)
-      obs_inc = inner_inc(1,:)
    else
       call error_handler(E_ERR,'obs_increment', &
               'Illegal value of filter_kind in assim_tools namelist [1-8 OK]', source)
@@ -1149,6 +1240,8 @@ real(r8) :: ker_alpha, eps
 real(r8) :: grad_ker(Ni, ens_size, ens_size)
 integer  :: i,j,k
 real(r8) :: testinput(200,200), testinverse(200,200)
+
+character:: output_name*50
 
 ! caluclate the prior mean, prior covariance matrix
 prior_mean = 0
@@ -1232,7 +1325,14 @@ post_pdf = like_pdf + prir_pdf
 ! in the following, do the matrix-kernel PFF for inner domain variables
 ! note the kernels are calculated within the do-loops
 
-ker_alpha = 1/(1.0_r8*ens_size) ! tuning parameter
+! adaptive kernel width
+!if (iter.lt.10) then
+!   ker_alpha = 100
+!else
+!   ker_alpha = 1/(1.0_r8*ens_size) ! tuning parameter
+!endif
+
+ker_alpha = 1/(1.0_r8*ens_size)
 eps       = 0.05 ! the pseudo time step
 
 do i=1,Ni
@@ -1261,9 +1361,19 @@ enddo
 
 if (my_task_id() ==0) then
 
-write(*,*) 'CCWU pff iteration ', iter
-write(*,*) 'CCWU prior = ', inner_pmatrix
-write(*,*) 'CCWU x = ', inner_cmatrix
+!write(*,*) iter
+! create output file:
+if (iter.eq.1) then
+   output_name='./output/PFF_linear_one_obs_x.dat'
+   !open(12,file=output_name,status='new',form='unformatted',access='direct',recl=4*Ni*ens_size)
+   !write(12, REC=iter  ) inner_cmatrix
+   !write(12, REC=iter+1) inner_cmatrix + inner_inc
+endif
+
+!write(12, REC=iter+1) inner_cmatrix + inner_inc
+!write(*,*) 'CCWU pff iteration ', iter
+!write(*,*) 'CCWU prior = ', inner_pmatrix
+!write(*,*) 'CCWU x = ', inner_cmatrix
 !write(*,*) 'CCWU H(x) = ', ens
 !write(*,*) 'CCWU obs = ', obs
 !write(*,*) 'CCWU obs_var = ', obs_var
@@ -2512,7 +2622,7 @@ subroutine obs_updates_ens(ens_size, num_groups, ens, updated_ens, ens_loc, ens_
    obs_prior, obs_inc, obs_prior_mean, obs_prior_var, obs_loc, obs_type, obs_time, &
    dist, cutoff_rev, net_a, adjust_obs_impact, obs_impact_table, &
    grp_size, grp_beg, grp_end, reg_factor_obs_index, reg_factor_ens_index, &
-   final_factor, correl)
+   final_factor, correl, state_prior)
 
 integer,             intent(in)  :: ens_size
 integer,             intent(in)  :: num_groups
@@ -2544,6 +2654,9 @@ real(r8) :: reg_coef(num_groups), increment(ens_size)
 real(r8) :: cov_factor, reg_factor
 integer  :: group, grp_bot, grp_top
 
+! CCWU
+real(r8), intent(in), optional :: state_prior(:)
+
 ! Compute the covariance localization and adjust_obs_impact factors
 cov_factor = cov_and_impact_factors(obs_loc, obs_type, ens_loc, &
    ens_kind, dist, cutoff_rev, adjust_obs_impact, obs_impact_table)
@@ -2559,9 +2672,14 @@ endif
 do group = 1, num_groups
    grp_bot = grp_beg(group); grp_top = grp_end(group)
    ! Do update of state, correl only needed for varying ss inflate but compute for all
-   call update_from_obs_inc(obs_prior(grp_bot:grp_top), obs_prior_mean(group), &
-      obs_prior_var(group), obs_inc(grp_bot:grp_top), ens(grp_bot:grp_top), grp_size, &
+!   call update_from_obs_inc(obs_prior(grp_bot:grp_top), obs_prior_mean(group), &
+!      obs_prior_var(group), obs_inc(grp_bot:grp_top), ens(grp_bot:grp_top), grp_size, &
+!      increment(grp_bot:grp_top), reg_coef(group), net_a(group), correl(group))
+
+  call update_from_obs_inc(obs_prior(grp_bot:grp_top), obs_prior_mean(group), &
+      obs_prior_var(group), obs_inc(grp_bot:grp_top), state_prior, grp_size, &
       increment(grp_bot:grp_top), reg_coef(group), net_a(group), correl(group))
+
 end do
 
 if(num_groups <= 1) then

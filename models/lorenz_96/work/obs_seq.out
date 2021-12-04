@@ -2,20 +2,32 @@
 obs_type_definitions
            0
   num_copies:            2  num_qc:            1
-  num_obs:            1  max_num_obs:            1
+  num_obs:            2  max_num_obs:            2
 observations                                                    
 truth                                                           
 Quality Control                                                 
-  first:            1  last:            1
+  first:            1  last:            2
  OBS            1
    5.64727020    
    4.26501036    
    0.00000000    
-          -1          -1          -1
+          -1           2          -1
 obdef
 loc1d
    0.0000000000000000
 kind
           -1
+     0          1
+   1.00000000    
+ OBS            2
+   4.16041088    
+   3.06462193    
+   0.00000000    
+           1          -1          -1
+obdef
+loc1d
+   0.2249999940395355
+kind
+         -10
      0          1
    1.00000000    
