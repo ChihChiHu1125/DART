@@ -369,8 +369,9 @@ real(r8), allocatable   :: prior_qc_copy(:)
 
 ! CCWU:
 integer :: iter ! the iteration for PFF
-integer :: n_my_obs, n_my_ens, n_inner
+integer :: n_my_state, n_my_obs, n_my_ens, n_inner
 integer :: jj, nobs, Ni
+character :: output_name*50
 real(r8), allocatable :: inner_prior(:,:,:)
 real(r8), allocatable :: state_prior(:,:)
 real(r8), allocatable :: output(:) 
@@ -888,47 +889,50 @@ AdvanceTime : do
 
 ! CCWU: NEED TO CHECK if this is the right start location...
 
-! The start of PFF iteration
-iter = 1
+   ! The start of PFF iteration
+   iter = 1
+
+   ! Save the state during all iterations:   
+   output_name='./output/PFF_linear_all_state.dat'
+   n_my_state=state_ens_handle%my_num_vars
+   !open(12,file=output_name,status='new',form='unformatted',access='direct',recl=4*n_my_state*ens_size)
+
 do while (iter.le.100)
 
    write(*,*) 'PFF iteration ', iter
+
+   !write(12, rec=iter) state_ens_handle%copies(1:ens_size,1:n_my_state)
+
    call get_obs_ens_distrib_state(state_ens_handle, obs_fwd_op_ens_handle, &
            qc_ens_handle, seq, keys, obs_val_index, input_qc_index, &
            OBS_ERR_VAR_COPY, OBS_VAL_COPY, OBS_KEY_COPY, OBS_GLOBAL_QC_COPY, &
            OBS_EXTRA_QC_COPY, OBS_MEAN_START, OBS_VAR_START, &
-           isprior=.true., prior_qc_copy=prior_qc_copy, iter=iter)
+           isprior=.true., prior_qc_copy=prior_qc_copy)
 
    ! Check on the inner domain info
    call output_inner_domain_info(50 + my_task_id())
 
-   ! Clear the inner domain info (should be done later when it's being used elsewhere)
-   ! call clear_inner_domain 
-
    if (iter.eq.1) then ! save prior information
 
       n_my_obs = obs_fwd_op_ens_handle%my_num_vars
-      n_my_ens = ens_size
       n_inner  = 50 ! this should be max_ni in assim_tools_mod.f90
 
-      state_prior = state_ens_handle%copies(1:ens_size,:)
+      state_prior = state_ens_handle%copies(1:ens_size,:) ! state_prior: prior of all the states in this pe
 
-      allocate(inner_prior(n_my_ens, n_inner, n_my_obs))
+      allocate(inner_prior(ens_size, n_inner, n_my_obs))
       allocate(output(50))
 
      ! write(*,*) '# obs = ', n_my_obs, '# ens =', n_my_ens 
       DO nobs =1, n_my_obs
-
          Ni = get_num_vars_inner_domain(nobs)
 
          do jj = 1, Ni
             call get_var_ens_inner_domain(nobs, jj, output)
-            inner_prior(:, jj, nobs) = output
+            inner_prior(:, jj, nobs) = output ! inner_prior: prior of inner domain
          enddo
-
       END DO
 
-   endif
+   endif ! end: save prior information
 
 
    call timestamp_message('After  computing prior observation values')
@@ -986,15 +990,15 @@ do while (iter.le.100)
       OBS_VAR_END, inflate_only = .false., iter=iter, &
       pinner=inner_prior, pstate=state_prior)
 
-! CCWU:
-! write out some diagnostics
-
 ! PFF clear info in the inner domain
-
    call clear_inner_domain
+   iter = iter + 1 ! go to next iteration
 
-   iter = iter + 1
-ENDDO ! PFF iteration
+END DO ! PFF iteration
+
+   deallocate(inner_prior)
+   deallocate(output)
+
 
    call timestamp_message('After  observation assimilation')
    call     trace_message('After  observation assimilation')
