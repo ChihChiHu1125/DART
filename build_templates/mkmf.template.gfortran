@@ -133,7 +133,7 @@ LD = gfortran
 # NETCDF = /opt/local
 
 INCS = -I$(NETCDF)/include
-LIBS = -L$(NETCDF)/lib -lnetcdff -lnetcdf
+LIBS = -L$(NETCDF)/lib -lnetcdff -lnetcdf -llapack -lblas
 FFLAGS  = -O2 -ffree-line-length-none $(INCS)
 LDFLAGS = $(FFLAGS) $(LIBS)
 

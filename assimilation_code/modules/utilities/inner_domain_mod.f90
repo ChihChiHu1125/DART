@@ -22,7 +22,7 @@ public :: inner_domain_type, init_inner_domain, clear_inner_domain,             
 
 ! Have a fixed upper bound for the size of the inner domain for now
 ! Might need to make this smarter for big models with complex forward operators
-integer, parameter :: max_num_vars = 10
+integer, parameter :: max_num_vars = 50
 
 type inner_domain_type
    integer                   :: max_num_obs, num_obs
@@ -231,9 +231,9 @@ subroutine get_var_index_inner_domain(n_obs, var_index, num_vars)
 ! Returns the inner domain variable indices and the number of inner domain vars
 ! for the nth observation in the list
 
-integer, intent(in)  :: n_obs
-integer, intent(out) :: var_index(:)
-integer, intent(out), optional :: num_vars
+integer,     intent(in)  :: n_obs
+integer(i8), intent(out) :: var_index(:)
+integer,     intent(out), optional :: num_vars
 
 ! Check for out of range
 if(n_obs > inner_domain%num_obs) then

@@ -369,12 +369,19 @@ real(r8), allocatable   :: prior_qc_copy(:)
 
 ! CCWU:
 integer :: iter ! the iteration for PFF
+integer, parameter :: max_iter=100
 integer :: n_my_state, n_my_obs, n_my_ens, n_inner
 integer :: jj, nobs, Ni
 character :: output_name*50
 real(r8), allocatable :: inner_prior(:,:,:)
 real(r8), allocatable :: state_prior(:,:)
+real(r8), allocatable :: state_prev_iter(:,:)
+real(r8), allocatable :: state_inc(:,:)
 real(r8), allocatable :: output(:) 
+real(r8), allocatable :: pff_norm_total(:,:)
+real(r8) :: eps_adap(max_iter)
+real(r8) :: eps_adap_decrease, min_eps_adap
+logical :: pff_update, early_stop
 
 call filter_initialize_modules_used() ! static_init_model called in here
 
@@ -892,16 +899,28 @@ AdvanceTime : do
    ! The start of PFF iteration
    iter = 1
 
-   ! Save the state during all iterations:   
-   output_name='./output/PFF_linear_all_state.dat'
-   n_my_state=state_ens_handle%my_num_vars
-   !open(12,file=output_name,status='new',form='unformatted',access='direct',recl=4*n_my_state*ens_size)
+   ! Save the state during all iterations:
+   if (my_task_id().eq.0) then   
+      output_name='./output/PFF_test0630.dat'
+      n_my_state=state_ens_handle%my_num_vars
+      open(12,file=output_name,status='unknown',form='unformatted',access='direct',recl=8*n_my_state*ens_size)
+      !write(*,*) state_ens_handle%my_vars
+   endif
 
-do while (iter.le.100)
+   eps_adap = 1 ! initial value for learning rate
+   min_eps_adap = 0.0001 ! when eps_adap lower than this value, exit the while-loop
 
-   write(*,*) 'PFF iteration ', iter
+   allocate(pff_norm_total(obs_fwd_op_ens_handle%num_vars,max_iter))
+   pff_norm_total = 0
+   pff_update=.true.
+   early_stop=.false.
 
-   !write(12, rec=iter) state_ens_handle%copies(1:ens_size,1:n_my_state)
+do while ((iter.le.max_iter).AND.(eps_adap(iter).ge.min_eps_adap*1.0_r8).AND.(.not.early_stop))
+
+   if (my_task_id().eq.0) then
+!      write(*,*) 'PFF iteration ', iter
+      write(12, rec=iter) state_ens_handle%copies(1:ens_size,1:n_my_state)
+   endif
 
    call get_obs_ens_distrib_state(state_ens_handle, obs_fwd_op_ens_handle, &
            qc_ens_handle, seq, keys, obs_val_index, input_qc_index, &
@@ -912,19 +931,23 @@ do while (iter.le.100)
    ! Check on the inner domain info
    call output_inner_domain_info(50 + my_task_id())
 
-   if (iter.eq.1) then ! save prior information
+   if ((iter.eq.1).and.(pff_update)) then ! save prior information
 
       n_my_obs = obs_fwd_op_ens_handle%my_num_vars
-      n_inner  = 50 ! this should be max_ni in assim_tools_mod.f90
+      n_inner  = 50 ! this should be consistent with (1) max_ni in assim_tools_mod.f90
+                    !                                (2) max_num_vars in inner_domain.f90
 
       state_prior = state_ens_handle%copies(1:ens_size,:) ! state_prior: prior of all the states in this pe
 
       allocate(inner_prior(ens_size, n_inner, n_my_obs))
-      allocate(output(50))
+      allocate(output(n_inner))
 
-     ! write(*,*) '# obs = ', n_my_obs, '# ens =', n_my_ens 
+      ! write(*,*) '# obs = ', n_my_obs, '# ens =', n_my_ens 
+
+      ! In the following, save the prior info for the inner domain:
       DO nobs =1, n_my_obs
-         Ni = get_num_vars_inner_domain(nobs)
+         Ni = get_num_vars_inner_domain(nobs) ! get # of inner domain variables
+                                              ! for the nobs-th observation
 
          do jj = 1, Ni
             call get_var_ens_inner_domain(nobs, jj, output)
@@ -932,55 +955,57 @@ do while (iter.le.100)
          enddo
       END DO
 
-   endif ! end: save prior information
+      call timestamp_message('After  computing prior observation values')
+      call     trace_message('After  computing prior observation values')
 
+      ! Write out preassim diagnostic files if requested.  This contains potentially 
+      ! damped prior inflation values and the inflated ensemble.
 
-   call timestamp_message('After  computing prior observation values')
-   call     trace_message('After  computing prior observation values')
+      if (get_stage_to_write('preassim')) then
+         if ((output_interval > 0) .and. &
+             (time_step_number / output_interval * output_interval == time_step_number)) then
 
-   ! Write out preassim diagnostic files if requested.  This contains potentially 
-   ! damped prior inflation values and the inflated ensemble.
-   if (get_stage_to_write('preassim')) then
-      if ((output_interval > 0) .and. &
-          (time_step_number / output_interval * output_interval == time_step_number)) then
+            call     trace_message('Before preassim state space output')
+            call timestamp_message('Before preassim state space output')
 
-         call     trace_message('Before preassim state space output')
-         call timestamp_message('Before preassim state space output')
+            ! save or output the data
+            if (write_all_stages_at_end) then
+               call store_copies(state_ens_handle, PREASSIM_COPIES)
+            else
+               call write_state(state_ens_handle, file_info_preassim)
+            endif
 
-         ! save or output the data
-         if (write_all_stages_at_end) then
-            call store_copies(state_ens_handle, PREASSIM_COPIES)
-         else
-            call write_state(state_ens_handle, file_info_preassim)
+            call timestamp_message('After  preassim state space output')
+            call     trace_message('After  preassim state space output')
+
          endif
-
-         call timestamp_message('After  preassim state space output')
-         call     trace_message('After  preassim state space output')
-
       endif
-   endif
 
-   call trace_message('Before observation space diagnostics')
+      call trace_message('Before observation space diagnostics')
 
-   ! This is where the mean obs
-   ! copy ( + others ) is moved to task 0 so task 0 can update seq.
-   ! There is a transpose (all_copies_to_all_vars(obs_fwd_op_ens_handle)) in obs_space_diagnostics
-   ! Do prior observation space diagnostics and associated quality control
-   call obs_space_diagnostics(obs_fwd_op_ens_handle, qc_ens_handle, ens_size, &
+      ! This is where the mean obs
+      ! copy ( + others ) is moved to task 0 so task 0 can update seq.
+      ! There is a transpose (all_copies_to_all_vars(obs_fwd_op_ens_handle)) in obs_space_diagnostics
+      ! Do prior observation space diagnostics and associated quality control
+      call obs_space_diagnostics(obs_fwd_op_ens_handle, qc_ens_handle, ens_size, &
            seq, keys, PRIOR_DIAG, num_output_obs_members, in_obs_copy+1, &
            obs_val_index, OBS_KEY_COPY, &
            prior_obs_mean_index, prior_obs_spread_index, num_obs_in_set, &
            OBS_MEAN_START, OBS_VAR_START, OBS_GLOBAL_QC_COPY, &
            OBS_VAL_COPY, OBS_ERR_VAR_COPY, DART_qc_index, compute_posterior)
-   call trace_message('After  observation space diagnostics')
+      call trace_message('After  observation space diagnostics')
 
-   if (iter.eq.1) then
       write(msgstring, '(A,I8,A)') 'Ready to assimilate up to', size(keys), ' observations'
       call trace_message(msgstring, 'filter:', -1)
-   endif
 
-   call     trace_message('Before observation assimilation')
-   call timestamp_message('Before observation assimilation')
+      call     trace_message('Before observation assimilation')
+      call timestamp_message('Before observation assimilation')
+
+   endif ! endif iter==1
+
+
+   ! CCWU: prior filter_assim
+   ! state_prev_iter = state_ens_handle%copies(1:ens_size,:) ! the state of the previous iteration
 
    call filter_assim(state_ens_handle, obs_fwd_op_ens_handle, seq, keys, &
       ens_size, num_groups, obs_val_index, prior_inflate, &
@@ -988,17 +1013,55 @@ do while (iter.le.100)
       PRIOR_INF_COPY, PRIOR_INF_SD_COPY, OBS_KEY_COPY, OBS_GLOBAL_QC_COPY, &
       OBS_MEAN_START, OBS_MEAN_END, OBS_VAR_START, &
       OBS_VAR_END, inflate_only = .false., iter=iter, &
-      pinner=inner_prior, pstate=state_prior)
+      pinner=inner_prior,pstate=state_prior, &
+      state_inc=state_inc, pff_norm_total=pff_norm_total,&
+      pff_update=pff_update, eps_adap=eps_adap, early_stop=early_stop)
 
-! PFF clear info in the inner domain
+
+   ! PFF clear info in the inner domain
    call clear_inner_domain
-   iter = iter + 1 ! go to next iteration
+
+   ! Note that PFF does not replace the state_ens_handle%copies by the new values
+   ! in the filter_assim module. Instead, PFF save the "temporary update" in "state_inc". 
+   ! This is because whether PFF needs to update depends on the variable "pff_update" (true
+   ! or false). If pff_update=true, then update the state_ens_handle%copies (by
+   ! adding state_inc); if pff_update=false, then go back to previous iteration
+   ! with smaller eps_adap
+
+   eps_adap_decrease = 0.9 ! dercrease rate for eps_adap; used if pff_update == false
+
+   ! 2022/06/03 test code:
+   !pff_update = .true. ! temp test
+   if (pff_update) then
+      if (my_task_id().eq.0) then
+         write(*,100) 'PE 0: filter: finish iteration ',iter,' , adaptive learning rate = ',eps_adap(iter)
+         100 format (A31,I3,A26,F6.4)
+      endif
+      state_prev_iter = state_ens_handle%copies(1:ens_size,:) ! state of previous iteration
+      state_ens_handle%copies(1:ens_size,:) = state_prev_iter + state_inc
+      iter = iter + 1
+   else
+      state_ens_handle%copies(1:ens_size,:) = state_prev_iter ! redo the previous iteration
+      iter = iter - 1
+      eps_adap(iter:max_iter) = eps_adap(iter)*eps_adap_decrease ! make adaptive learning rate smaller
+      if (my_task_id().eq.0) then
+         write(*,101) 'PE 0: filter:   !!! learning rate too large, try smaller learning rate ',eps_adap(iter)
+         101 format (A71, F6.4)
+      endif
+   endif
+
+   if ((early_stop).and.(my_task_id().eq.0)) then
+      write(*,*) 'PE 0: filter: reach early stopping criterion.'
+   endif
+
+   call task_sync() ! synchronize all the pe at this point
 
 END DO ! PFF iteration
 
+
    deallocate(inner_prior)
    deallocate(output)
-
+   deallocate(pff_norm_total)
 
    call timestamp_message('After  observation assimilation')
    call     trace_message('After  observation assimilation')
