@@ -1043,7 +1043,7 @@ end do SEQUENTIAL_OBS
 ! determine now if we would like to add the increment to the current state
 
 norm_increase_tolerance = 1.2
-early_stop_criterion    = 5 ! 5% of the initial norm value
+early_stop_criterion    = 1 ! 5% of the initial norm value
 ! calculate the norm of the increments:
 pff_norm_per_last_iter = sqrt(sum(pff_norm_total(:,max(iter-1,1)))/sum(pff_norm_total(:,1)))*100
 pff_norm_per_this_iter = sqrt(sum(pff_norm_total(:,iter))/sum(pff_norm_total(:,1)))*100
@@ -1351,11 +1351,11 @@ integer  :: i,j,k
 type(location_type):: inner_loc(Ni)
 
 !real(r8) :: S(2),U(4,4),VT(2,2),A(4,2)
-real(r8),allocatable:: work(:)
-integer  :: info_svd, LWORK
-real(r8) :: testinput(200,200), testinverse(200,200)
+!real(r8),allocatable:: work(:)
+!integer  :: info_svd, LWORK
+!real(r8) :: testinput(200,200), testinverse(200,200)
 
-character:: output_name*50
+!character:: output_name*50
 
 
 !write(*,*) '(obs_increment_pff) cutoff = ',cutoff
@@ -1369,11 +1369,16 @@ enddo
 !write(*,*) inner_ind
 !write(*,*) get_dist(inner_loc(1), inner_loc(2))
 
-
+! compute the localization factor for each pair of inner domain variables:
 do i=1,Ni
    do j=1,Ni
-      dd(i,j)         = get_dist(inner_loc(i), inner_loc(j))
-      cov_factor(i,j) = comp_cov_factor(dd(i,j),cutoff)
+      if (j.ge.i) then
+         dd(j,i)         = get_dist(inner_loc(j), inner_loc(i))
+         cov_factor(j,i) = comp_cov_factor(dd(j,i),cutoff)
+      else
+         dd(j,i)         = dd(i,j)
+         cov_factor(j,i) = cov_factor(i,j)
+      endif
    enddo
 enddo
 
@@ -1381,18 +1386,18 @@ enddo
 !write(*,*) 'cov_factor = ', cov_factor 
 
 ! caluclate the prior mean, prior covariance matrix
-prior_mean = 0.0_r8
 prior_mean = sum(inner_pmatrix,dim=1)/ens_size
 
-! prior covariance matrix (need to see how to localize!)
+! the localized prior covariance matrix (need to make sure if the localization is correct)
 do i=1,Ni
-do j=1,Ni
-    if (j.ge.i) then
-        prior_cov(i,j) = cov_factor(i,j)*dot_product(inner_pmatrix(:,i)-prior_mean(i),inner_pmatrix(:,j)-prior_mean(j))/(ens_size-1)
-    else
-        prior_cov(i,j) = prior_cov(j,i)
-    endif
-enddo
+   do j=1,Ni
+      if (j.ge.i) then
+         prior_cov(j,i) = cov_factor(j,i)*dot_product(inner_pmatrix(:,j)-prior_mean(j), &
+                                                      inner_pmatrix(:,i)-prior_mean(i))/(ens_size-1)
+      else
+         prior_cov(j,i) = prior_cov(i,j)
+      endif
+   enddo
 enddo
 
 
@@ -1408,6 +1413,7 @@ input_inverse = prior_cov ! input_inverse is a dummy variable that passes prior_
 !write(*,*) prior_cov, input_inverse
 !write(*,*) '(call inverse) prior cov inv = ',prior_cov_inv
 
+! use SVD to calculate the inverse of prior covariance (of inner domain)
 call svd_pseudo_inverse(input_inverse,prior_cov_inv,Ni,Ni,0.001*1.0_r8)
 
 ! estimation of the adjoint of the observation operator
@@ -1416,15 +1422,20 @@ call svd_pseudo_inverse(input_inverse,prior_cov_inv,Ni,Ni,0.001*1.0_r8)
 input_x = inner_cmatrix
 
 !write(*,*) 'before call input_x = ',input_x(1:5,1)
+
+! METHOD 1: linear regression: ======
 !call HT_regress(HT, input_x, ens, ens_size, Ni,0.001*1.0_r8)
+! ===================================
 
 !write(*,*) 'after inner_c (first member) =',inner_cmatrix(1,:)
 !write(*,*) 'after call input_x = ',input_x(1:5,1)
 !write(*,*) 'HT=',HT
 !input_x = inner_cmatrix
 
+! METHOD 2: kernel approx: ==========
+call HT_kernel(HT, input_x, ens, ens_size, Ni, 0.05*1.0_r8)
+! ===================================
 
-!call HT_kernel(HT, input_x, ens, ens_size, Ni, 0.05*1.0_r8)
 !write(*,*) 'kernel adjoint = ',HT(ens_size,:)
 !write(*,*) '(call svd_pseudo_inverse) prior cov inv = ',prior_cov_inv
 
@@ -1457,20 +1468,21 @@ input_x = inner_cmatrix
 !enddo
 
 
-! in the following (ONLY APPLIED for square obs at state variable grids)
-do i=1,Ni
-    do j=1,ens_size
-        HT(j,i) = 1
-!        HT(j,i) = 2*inner_cmatrix(j,i)
-    enddo
-enddo
+! analytical solutions for the adjoint of obs operator (ONLY for verification)
+!do i=1,Ni
+!   do j=1,ens_size
+!      HT(j,i) = 0.5
+!      HT(j,i) = 1
+!      HT(j,i) = 2*inner_cmatrix(j,i)
+!    enddo
+!enddo
 
-! in the following, calculate B*grad log posterior
-! This can be decomposed into B*(grad log likelihood + grad log prior)
-! Will denote as like_pdf + prir_pdf
-! where like_pdf = B*(grad log likelihood)
-!       prir_pdf = B*(grad log prior)
+! in the following, calculate the gradient of the posterior pdf
+! We can either (1) include the precondition:        B*grad log posterior
+!        or     (2) do not include the precondition:   grad log posterior 
+! Decompose the log posterior = log likelihood (like_pdf) + log prior (prir_pdf)
 
+! with precondition B:
 !do i=1,Ni
 !    do j=1,ens_size
 !        like_pdf(j,i) = dot_product(prior_cov(i,:),HT(j,:))*(obs-ens(j))/obs_var
@@ -1478,13 +1490,16 @@ enddo
 !    enddo
 !enddo
 
-
 ! without precondition on B:
 do i=1,ens_size
    like_pdf(i,:) = HT(i,:)*(obs-ens(i))/obs_var
    prir_pdf(i,:) = -matmul( prior_cov_inv, inner_cmatrix(i,:)-prior_mean(:) )
 enddo
 
+!write(*,*) 'prior_cov     = ', prior_cov
+!write(*,*) 'prior_cov_inv = ', prior_cov_inv
+!write(*,*) 'dx = ', inner_cmatrix(1,:) - prior_mean(:)
+!write(*,*) 'Binv*dx =', prir_pdf(1,:)
 
 !write(*,*) 'cmatrix = ',inner_cmatrix(1,1), inner_cmatrix(20,1)
 !write(*,*) 'like pdf =', like_pdf(1,1), like_pdf(20,1)
@@ -1510,8 +1525,8 @@ ker_alpha = 20/(ens_size*1.0_r8)*(Ni*1.0_r8)
 ! total learning rate (eps) = learning rate of different type * learning rate of
 ! different error * adaptive (in each iteration) part of the learning rate
 !if (base_obs_type.le.0) then 
-   eps_type = 0.05 ! for identity obs
-!    eps_type = 0.01
+!   eps_type = 0.1 ! for identity obs
+    eps_type = 0.1
 !endif
 
 hx_mean = sum(ens)/(1.0_r8*ens_size)
@@ -1520,6 +1535,7 @@ hx_var  = sum((ens-hx_mean)**2)/(1.0_r8*(ens_size-1))
 eps_err = min(obs_var/hx_var,1.0_r8)
 
 eps = eps_type*eps_err*eps_adap(iter)
+
 
 !write(*,*) 'eps (without eps_adap) = ', eps/eps_adap(iter)
 
@@ -1603,7 +1619,7 @@ do i=1,ens_size
    do j=1,ens_size
       inner_inc(i,:) = inner_inc(i,:) + eps*( kernel(i,j)*post_pdf(j,:) + grad_ker(i,j,:) )/(1.0_r8*ens_size)
    enddo
-   norm_inc = norm_inc + (norm2(inner_inc(i,:))/eps)**2 /Ni
+   norm_inc = norm_inc + (norm2(inner_inc(i,:))/eps)**2 /(1.0_r8*Ni)
 
 end do
 
