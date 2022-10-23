@@ -48,7 +48,7 @@ use         location_mod, only : location_type, get_close_type, query_location, 
 
 use ensemble_manager_mod, only : ensemble_type, get_my_num_vars, get_my_vars,             &
                                  compute_copy_mean_var, get_var_owner_index,              &
-                                 prepare_to_update_copies, map_pe_to_task
+                                 map_pe_to_task
 
 use mpi_utilities_mod,    only : my_task_id, broadcast_send, broadcast_recv,              &
                                  sum_across_tasks, task_count, start_mpi_timer,           &
@@ -97,7 +97,6 @@ integer                :: num_types = 0
 real(r8), allocatable  :: cutoff_list(:)
 logical                :: has_special_cutoffs
 logical                :: close_obs_caching = .true.
-real(r8), parameter    :: small = epsilon(1.0_r8)   ! threshold for avoiding NaNs/Inf
 
 ! true if we have multiple vert choices and we're doing vertical localization
 ! (make it a local variable so we don't keep making subroutine calls)
@@ -344,8 +343,6 @@ real(r8) :: obs_prior_mean(num_groups), obs_prior_var(num_groups)
 real(r8) :: vertvalue_obs_in_localization_coord, whichvert_real
 real(r8), allocatable :: close_obs_dist(:)
 real(r8), allocatable :: close_state_dist(:)
-real(r8), allocatable :: last_close_obs_dist(:)
-real(r8), allocatable :: last_close_state_dist(:)
 
 integer(i8) :: state_index
 integer(i8), allocatable :: my_state_indx(:)
@@ -363,8 +360,6 @@ integer :: whichvert_obs_in_localization_coord
 integer :: istatus, localization_unit
 integer, allocatable :: close_obs_ind(:)
 integer, allocatable :: close_state_ind(:)
-integer, allocatable :: last_close_obs_ind(:)
-integer, allocatable :: last_close_state_ind(:)
 integer, allocatable :: my_obs_kind(:)
 integer, allocatable :: my_obs_type(:)
 integer, allocatable :: my_state_kind(:)
@@ -386,7 +381,6 @@ logical :: local_varying_ss_inflate
 logical :: local_ss_inflate
 logical :: local_obs_inflate
 
-integer, allocatable :: n_close_state_items(:), n_close_obs_items(:)
 
 ! CCWU:
 integer,  intent(in), optional :: iter ! the PFF iteration
@@ -430,16 +424,9 @@ logical,  intent(out),  optional :: early_stop
 integer  :: max_iter
 
 
-
-! how about this?  look for imbalances in the tasks
-allocate(n_close_state_items(obs_ens_handle%num_vars), &
-         n_close_obs_items(  obs_ens_handle%num_vars))
-
 ! allocate rather than dump all this on the stack
 allocate(close_obs_dist(     obs_ens_handle%my_num_vars), &
-         last_close_obs_dist(obs_ens_handle%my_num_vars), &
          close_obs_ind(      obs_ens_handle%my_num_vars), &
-         last_close_obs_ind( obs_ens_handle%my_num_vars), &
          vstatus(            obs_ens_handle%my_num_vars), &
          my_obs_indx(        obs_ens_handle%my_num_vars), &
          my_obs_kind(        obs_ens_handle%my_num_vars), &
@@ -447,17 +434,11 @@ allocate(close_obs_dist(     obs_ens_handle%my_num_vars), &
          my_obs_loc(         obs_ens_handle%my_num_vars))
 
 allocate(close_state_dist(     ens_handle%my_num_vars), &
-         last_close_state_dist(ens_handle%my_num_vars), &
          close_state_ind(      ens_handle%my_num_vars), &
-         last_close_state_ind( ens_handle%my_num_vars), &
          my_state_indx(        ens_handle%my_num_vars), &
          my_state_kind(        ens_handle%my_num_vars), &
          my_state_loc(         ens_handle%my_num_vars))
 ! end alloc
-
-! we are going to read/write the copies array
-call prepare_to_update_copies(ens_handle)
-call prepare_to_update_copies(obs_ens_handle)
 
 ! Initialize assim_tools_module if needed
 if (.not. module_initialized) call assim_tools_init()
@@ -609,10 +590,6 @@ if (close_obs_caching) then
    last_base_states_loc        = set_location_missing()
    last_num_close_obs          = -1
    last_num_close_states       = -1
-   last_close_obs_ind(:)       = -1
-   last_close_state_ind(:)     = -1
-   last_close_obs_dist(:)      = 888888.0_r8   ! something big, not small
-   last_close_state_dist(:)    = 888888.0_r8   ! ditto
    num_close_obs_cached        = 0
    num_close_states_cached     = 0
    num_close_obs_calls_made    = 0
@@ -833,12 +810,10 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
   
    ! Adaptive localization needs number of other observations within localization radius.
    ! Do get_close_obs first, even though state space increments are computed before obs increments.
-   ! JLA: ens_handle doesn't ever appear to be used. Get rid of it. Should be obs_ens_handle anyway?
-   call  get_close_obs_cached(close_obs_caching, gc_obs, base_obs_loc, base_obs_type,      &
+   call  get_close_obs_cached(gc_obs, base_obs_loc, base_obs_type,      &
       my_obs_loc, my_obs_kind, my_obs_type, num_close_obs, close_obs_ind, close_obs_dist,  &
-      ens_handle, last_base_obs_loc, last_num_close_obs, last_close_obs_ind,               &
-      last_close_obs_dist, num_close_obs_cached, num_close_obs_calls_made)
-   n_close_obs_items(i) = num_close_obs
+      ens_handle, last_base_obs_loc, last_num_close_obs, num_close_obs_cached,             &
+      num_close_obs_calls_made)
 
    ! set the cutoff default, keep a copy of the original value, and avoid
    ! looking up the cutoff in a list if the incoming obs is an identity ob
@@ -856,11 +831,10 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
       i, base_obs_loc, obs_def, localization_unit)
 
    ! Find state variables on my process that are close to observation being assimilated
-   call  get_close_state_cached(close_obs_caching, gc_state, base_obs_loc, base_obs_type,      &
+   call  get_close_state_cached(gc_state, base_obs_loc, base_obs_type,      &
       my_state_loc, my_state_kind, my_state_indx, num_close_states, close_state_ind, close_state_dist,  &
-      ens_handle, last_base_states_loc, last_num_close_states, last_close_state_ind,               &
-      last_close_state_dist, num_close_states_cached, num_close_states_calls_made)
-   n_close_state_items(i) = num_close_states
+      ens_handle, last_base_states_loc, last_num_close_states, num_close_states_cached,              &
+      num_close_states_calls_made)
    !call test_close_obs_dist(close_state_dist, num_close_states, i)
 
 ! CCWU: test the radius of influence
@@ -916,6 +890,13 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
             if (any(ens_handle%copies(1:ens_size, state_index) == MISSING_R8)) cycle STATE_UPDATE
          endif
 
+         ! Compute the covariance localization and adjust_obs_impact
+         ! factors (module storage)
+         final_factor = cov_and_impact_factors(base_obs_loc, base_obs_type, my_state_loc(state_index), &
+                                               my_state_kind(state_index), close_state_dist(j), cutoff_rev)
+
+         if(final_factor <= 0.0_r8) cycle STATE_UPDATE
+
          ! Note: pstate: the prior values of all the state variables in my pe (sent
          ! from filter_main)
          call obs_updates_ens(ens_size, num_groups, ens_handle%copies(1:ens_size, state_index), &
@@ -924,8 +905,6 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
             close_state_dist(j), cutoff_rev, net_a, adjust_obs_impact, obs_impact_table, &
             grp_size, grp_beg, grp_end, i, my_state_indx(state_index), final_factor, correl, &
             state_prior=pstate(1:ens_size, state_index))
-
-         ! If doing full assimilation, update the state variable ensemble with weighted increments
 
          ! CCWU: important change here!
          ! Do NOT update the state variable immediately, ONLY store the increment for now, and will
@@ -1036,7 +1015,6 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
 !    write(*,*) 'ccwu = ', ccwu, 'ccwu_tmp = ',ccwu_tmp, 'ccwu_add = ',ccwu_add
 !endif 
 
-
 end do SEQUENTIAL_OBS
 
 ! CCWU important step for adaptive learning rate in PFF:
@@ -1089,21 +1067,6 @@ call get_close_destroy(gc_obs)
 ! this is going to be per-task.  so only print if something interesting
 ! shows up in the stats?  maybe it would be worth a reduce() call here?
 
-!>@todo FIXME:  
-!  we have n_close_obs_items and n_close_state_items for each assimilated
-!  observation.  what we really want to know is across the tasks is there
-!  a big difference in counts?  so that means communication.  maybe just
-!  the largest value?  and the number of 0 values?  and if the largest val
-!  is way off compared to the other tasks, warn the user?
-!  we don't have space or time to do all the obs * tasks but could we
-!  send enough info to make a histogram?  compute N bin counts and then
-!  reduce that across all the tasks and have task 0 print out?
-! still thinking on this idea.
-!   write(msgstring, *) 'max state items per observation: ', maxval(n_close_state_items)
-!   call error_handler(E_MSG, 'filter_assim:', msgstring)
-! if i come up with something i like, can we use the same idea
-! for the threed_sphere locations boxes?
-
 ! Assure user we have done something
 if (print_trace_details >= 0) then
 
@@ -1142,17 +1105,19 @@ call free_mean_window()
 
 ! deallocate space
 deallocate(close_obs_dist,      &
-           last_close_obs_dist, &
            my_obs_indx,         &
            my_obs_kind,         &
            my_obs_type,         &
            close_obs_ind,       &
-           last_close_obs_ind,  &
            vstatus,             &
            my_obs_loc)
 
-deallocate(n_close_state_items, &
-           n_close_obs_items)
+deallocate(close_state_dist,      &
+           my_state_indx,         &
+           close_state_ind,       &
+           my_state_kind,         &
+           my_state_loc)
+
 ! end dealloc
 
 end subroutine filter_assim
@@ -3095,21 +3060,19 @@ real(r8),            intent(in)  :: obs_prior_var(num_groups)
 type(location_type), intent(in)  :: obs_loc
 integer,             intent(in)  :: obs_type
 type(time_type),     intent(in)  :: obs_time
-real(r8),            intent(in)  :: dist
-real(r8),            intent(in)  :: cutoff_rev
 real(r8),            intent(in)  :: net_a(num_groups)
-logical,             intent(in)  :: adjust_obs_impact
-real(r8),            intent(in)  :: obs_impact_table(:, :)
 integer,             intent(in)  :: grp_size
 integer,             intent(in)  :: grp_beg(num_groups)
 integer,             intent(in)  :: grp_end(num_groups)
 integer,             intent(in)  :: reg_factor_obs_index
 integer(i8),         intent(in)  :: reg_factor_ens_index
-real(r8),            intent(out) :: final_factor
+real(r8),            intent(inout) :: final_factor
 real(r8),            intent(out) :: correl(num_groups)
+logical,             intent(in)  :: correl_needed
+logical,             intent(in)  :: inflate_only
 
 real(r8) :: reg_coef(num_groups), increment(ens_size)
-real(r8) :: cov_factor, reg_factor
+real(r8) :: reg_factor
 integer  :: group, grp_bot, grp_top
 
 ! CCWU
@@ -3146,12 +3109,10 @@ do group = 1, num_groups
 
 end do
 
-if(num_groups <= 1) then
-   final_factor = cov_factor
-else
+if(num_groups > 1) then
    reg_factor = comp_reg_factor(num_groups, reg_coef, obs_time, &
       reg_factor_obs_index, reg_factor_ens_index)
-   final_factor = min(cov_factor, reg_factor)
+   final_factor = min(final_factor, reg_factor)
 endif
 
 ! Get the updated ensemble
@@ -3169,7 +3130,7 @@ end subroutine obs_updates_ens
 !-------------------------------------------------------------
 
 function cov_and_impact_factors(base_obs_loc, base_obs_type, state_loc, state_kind, &
-dist, cutoff_rev, adjust_obs_impact, obs_impact_table)
+dist, cutoff_rev)
 
 ! Computes the cov_factor and multiplies by obs_impact_factor if selected
 
@@ -3180,12 +3141,10 @@ type(location_type), intent(in) :: state_loc
 integer, intent(in) :: state_kind
 real(r8), intent(in) :: dist
 real(r8), intent(in) :: cutoff_rev
-logical, intent(in)  :: adjust_obs_impact
-real(r8), intent(in) :: obs_impact_table(:, 0:)
 
 real(r8) :: impact_factor, cov_factor
 
-! Get external impact factors, cycle if impact of this ob on this state is zerio
+! Get external impact factors, cycle if impact of this ob on this state is zero
 if (adjust_obs_impact) then
    ! Get the impact factor from the table if requested
    impact_factor = obs_impact_table(base_obs_type, state_kind)
@@ -3580,22 +3539,20 @@ end subroutine get_my_obs_loc
 !> Get close obs from cache if appropriate. Cache new get_close_obs info
 !> if requested.
 
-subroutine get_close_obs_cached(close_obs_caching, gc_obs, base_obs_loc, base_obs_type, &
+subroutine get_close_obs_cached(gc_obs, base_obs_loc, base_obs_type, &
    my_obs_loc, my_obs_kind, my_obs_type, num_close_obs, close_obs_ind, close_obs_dist,  &
-   ens_handle, last_base_obs_loc, last_num_close_obs, last_close_obs_ind,               &
-   last_close_obs_dist, num_close_obs_cached, num_close_obs_calls_made)
+   ens_handle, last_base_obs_loc, last_num_close_obs, num_close_obs_cached,               &
+   num_close_obs_calls_made)
 
-logical, intent(in) :: close_obs_caching
 type(get_close_type),          intent(in)  :: gc_obs
 type(location_type),           intent(inout) :: base_obs_loc, my_obs_loc(:)
 integer,                       intent(in)  :: base_obs_type, my_obs_kind(:), my_obs_type(:)
-integer,                       intent(out) :: num_close_obs, close_obs_ind(:)
-real(r8),                      intent(out) :: close_obs_dist(:)
+integer,                       intent(out) :: num_close_obs
+integer,                       intent(inout) :: close_obs_ind(:)
+real(r8),                      intent(inout) :: close_obs_dist(:)
 type(ensemble_type),           intent(in)  :: ens_handle
 type(location_type), intent(inout) :: last_base_obs_loc
 integer, intent(inout) :: last_num_close_obs
-integer, intent(inout) :: last_close_obs_ind(:)
-real(r8), intent(inout) :: last_close_obs_dist(:)
 integer, intent(inout) :: num_close_obs_cached, num_close_obs_calls_made
 
 ! This logic could be arranged to make code less redundant
@@ -3606,8 +3563,6 @@ if (.not. close_obs_caching) then
 else
    if (base_obs_loc == last_base_obs_loc) then
       num_close_obs     = last_num_close_obs
-      close_obs_ind(:)  = last_close_obs_ind(:)
-      close_obs_dist(:) = last_close_obs_dist(:)
       num_close_obs_cached = num_close_obs_cached + 1
    else
       call get_close_obs(gc_obs, base_obs_loc, base_obs_type, &
@@ -3616,8 +3571,6 @@ else
 
       last_base_obs_loc      = base_obs_loc
       last_num_close_obs     = num_close_obs
-      last_close_obs_ind(:)  = close_obs_ind(:)
-      last_close_obs_dist(:) = close_obs_dist(:)
       num_close_obs_calls_made = num_close_obs_calls_made +1
    endif
 endif
@@ -3628,23 +3581,21 @@ end subroutine get_close_obs_cached
 !> Get close state from cache if appropriate. Cache new get_close_state info
 !> if requested.
 
-subroutine get_close_state_cached(close_obs_caching, gc_state, base_obs_loc, base_obs_type, &
+subroutine get_close_state_cached(gc_state, base_obs_loc, base_obs_type, &
    my_state_loc, my_state_kind, my_state_indx, num_close_states, close_state_ind, close_state_dist,  &
-   ens_handle, last_base_states_loc, last_num_close_states, last_close_state_ind,               &
-   last_close_state_dist, num_close_states_cached, num_close_states_calls_made)
+   ens_handle, last_base_states_loc, last_num_close_states, num_close_states_cached,               &
+   num_close_states_calls_made)
 
-logical, intent(in) :: close_obs_caching
 type(get_close_type),          intent(in)    :: gc_state
 type(location_type),           intent(inout) :: base_obs_loc, my_state_loc(:)
 integer,                       intent(in)    :: base_obs_type, my_state_kind(:)
 integer(i8),                   intent(in)    :: my_state_indx(:)
-integer,                       intent(out)   :: num_close_states, close_state_ind(:)
-real(r8),                      intent(out)   :: close_state_dist(:)
+integer,                       intent(out)   :: num_close_states
+integer,                       intent(inout) :: close_state_ind(:)
+real(r8),                      intent(inout) :: close_state_dist(:)
 type(ensemble_type),           intent(in)    :: ens_handle
 type(location_type), intent(inout) :: last_base_states_loc
 integer, intent(inout) :: last_num_close_states
-integer, intent(inout) :: last_close_state_ind(:)
-real(r8), intent(inout) :: last_close_state_dist(:)
 integer, intent(inout) :: num_close_states_cached, num_close_states_calls_made
 
 ! This logic could be arranged to make code less redundant
@@ -3655,8 +3606,6 @@ if (.not. close_obs_caching) then
 else
    if (base_obs_loc == last_base_states_loc) then
       num_close_states     = last_num_close_states
-      close_state_ind(:)  = last_close_state_ind(:)
-      close_state_dist(:) = last_close_state_dist(:)
       num_close_states_cached = num_close_states_cached + 1
    else
       call get_close_state(gc_state, base_obs_loc, base_obs_type, &
@@ -3665,8 +3614,6 @@ else
 
       last_base_states_loc      = base_obs_loc
       last_num_close_states     = num_close_states
-      last_close_state_ind(:)  = close_state_ind(:)
-      last_close_state_dist(:) = close_state_dist(:)
       num_close_states_calls_made = num_close_states_calls_made +1
    endif
 endif
