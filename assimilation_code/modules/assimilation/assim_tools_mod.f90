@@ -1424,7 +1424,7 @@ input_x = inner_cmatrix
 !write(*,*) 'before call input_x = ',input_x(1:5,1)
 
 ! METHOD 1: linear regression: ======
-!call HT_regress(HT, input_x, ens, ens_size, Ni,0.001*1.0_r8)
+call HT_regress(HT, input_x, ens, ens_size, Ni,0.001*1.0_r8)
 ! ===================================
 
 !write(*,*) 'after inner_c (first member) =',inner_cmatrix(1,:)
@@ -1433,7 +1433,7 @@ input_x = inner_cmatrix
 !input_x = inner_cmatrix
 
 ! METHOD 2: kernel approx: ==========
-call HT_kernel(HT, input_x, ens, ens_size, Ni, 0.05*1.0_r8)
+!call HT_kernel(HT, input_x, ens, ens_size, Ni, 0.05*1.0_r8)
 ! ===================================
 
 !write(*,*) 'kernel adjoint = ',HT(ens_size,:)
