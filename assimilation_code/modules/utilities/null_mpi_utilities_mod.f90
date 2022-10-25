@@ -319,13 +319,13 @@ end function iam_task0
 !> Returns with nothing to do.  Does validate the 'from' task id.
 !> Not an error to call.
 
-subroutine broadcast_send(from, array1, array2, array3, array4, array5, &
-                          scalar1, scalar2, scalar3, scalar4, scalar5)
+subroutine broadcast_send(from, array1, array2, array3, array4, array5, array6, &
+                          scalar1, scalar2, scalar3, scalar4, scalar5, scalar6)
  integer, intent(in) :: from
 ! arrays are really only intent(in) here, but must match array_broadcast() call.
  real(r8), intent(inout) :: array1(:)
- real(r8), intent(inout), optional :: array2(:), array3(:), array4(:), array5(:)
- real(r8), intent(inout), optional :: scalar1, scalar2, scalar3, scalar4, scalar5
+ real(r8), intent(inout), optional :: array2(:), array3(:), array4(:), array5(:), array6(:)
+ real(r8), intent(inout), optional :: scalar1, scalar2, scalar3, scalar4, scalar5, scalar6
 
 if ( .not. module_initialized ) call initialize_mpi_utilities()
 
@@ -347,13 +347,13 @@ end subroutine broadcast_send
 !> Returns with nothing to do.  Does validate the 'from' task id.
 !> Not an error to call.
 
-subroutine broadcast_recv(from, array1, array2, array3, array4, array5, &
-                          scalar1, scalar2, scalar3, scalar4, scalar5)
+subroutine broadcast_recv(from, array1, array2, array3, array4, array5, array6, &
+                          scalar1, scalar2, scalar3, scalar4, scalar5, scalar6)
  integer, intent(in) :: from
 ! arrays are really only intent(out) here, but must match array_broadcast() call.
  real(r8), intent(inout) :: array1(:)
- real(r8), intent(inout), optional :: array2(:), array3(:), array4(:), array5(:)
- real(r8), intent(inout), optional :: scalar1, scalar2, scalar3, scalar4, scalar5
+ real(r8), intent(inout), optional :: array2(:), array3(:), array4(:), array5(:), array6(:)
+ real(r8), intent(inout), optional :: scalar1, scalar2, scalar3, scalar4, scalar5, scalar6
 
 if ( .not. module_initialized ) call initialize_mpi_utilities()
 

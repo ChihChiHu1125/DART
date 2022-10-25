@@ -3053,6 +3053,13 @@ real(r8),            intent(in)  :: ens(ens_size) ! current state variable
 real(r8),            intent(out) :: updated_ens(ens_size)
 type(location_type), intent(in)  :: ens_loc
 integer,             intent(in)  :: ens_kind
+
+! git test (22/10/23)
+real(r8),            intent(in)  :: dist
+real(r8),            intent(in)  :: cutoff_rev
+logical,             intent(in)  :: adjust_obs_impact
+real(r8),            intent(in)  :: obs_impact_table(:,:)
+
 real(r8),            intent(in)  :: obs_prior(ens_size)
 real(r8),            intent(in)  :: obs_inc(ens_size)
 real(r8),            intent(in)  :: obs_prior_mean(num_groups)
@@ -3068,8 +3075,13 @@ integer,             intent(in)  :: reg_factor_obs_index
 integer(i8),         intent(in)  :: reg_factor_ens_index
 real(r8),            intent(inout) :: final_factor
 real(r8),            intent(out) :: correl(num_groups)
-logical,             intent(in)  :: correl_needed
-logical,             intent(in)  :: inflate_only
+
+! git test (22/10/23)
+!logical,             intent(in)  :: correl_needed
+!logical,             intent(in)  :: inflate_only
+
+! git test (22/10/23)
+real(r8) :: cov_factor
 
 real(r8) :: reg_coef(num_groups), increment(ens_size)
 real(r8) :: reg_factor
@@ -3080,7 +3092,7 @@ real(r8), intent(in), optional :: state_prior(ens_size) ! prior state variable
 
 ! Compute the covariance localization and adjust_obs_impact factors
 cov_factor = cov_and_impact_factors(obs_loc, obs_type, ens_loc, &
-   ens_kind, dist, cutoff_rev, adjust_obs_impact, obs_impact_table)
+   ens_kind, dist, cutoff_rev)
 
 ! If no impact, don't do anything else
 if(cov_factor <= 0.0_r8) then
