@@ -29,7 +29,7 @@
 
 &filter_nml
    single_file_in               = .true.,
-   input_state_files            = 'filter_input.nc'
+   input_state_files            = 'perfect_input.nc'
    input_state_file_list        = ''
 
    stages_to_write  = 'preassim', 'analysis', 'output'
@@ -46,8 +46,8 @@
 
    ens_size                     = 20,
    num_groups                   = 1,
-   perturb_from_single_instance = .false.,
-   perturbation_amplitude       = 0.2,
+   perturb_from_single_instance = .true.,
+   perturbation_amplitude       = 5.0,
    distributed_state            = .true.
 
    async                        = 0,

@@ -1491,7 +1491,7 @@ ker_alpha = 20/(ens_size*1.0_r8)*(Ni*1.0_r8)
 ! different error * adaptive (in each iteration) part of the learning rate
 !if (base_obs_type.le.0) then 
 !   eps_type = 0.1 ! for identity obs
-    eps_type = 0.0001
+    eps_type = 0.1
 !endif
 
 hx_mean = sum(ens)/(1.0_r8*ens_size)

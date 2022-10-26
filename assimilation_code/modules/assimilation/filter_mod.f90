@@ -890,9 +890,10 @@ AdvanceTime : do
 
    ! Save the state during all iterations:
    if (my_task_id().eq.0) then   
-      output_name='./output/PFF_test0630.dat'
-      n_my_state=state_ens_handle%my_num_vars
-      open(12,file=output_name,status='unknown',form='unformatted',access='direct',recl=8*n_my_state*ens_size)
+      output_name='./output/PFF_bgrid.dat'
+      !n_my_state=state_ens_handle%my_num_vars
+      n_my_obs=obs_fwd_op_ens_handle%my_num_vars 
+      open(12,file=output_name,status='unknown',form='unformatted',access='direct',recl=8*n_my_obs*ens_size)
       !write(*,*) state_ens_handle%my_vars
    endif
 
@@ -906,16 +907,20 @@ AdvanceTime : do
 
 do while ((iter.le.max_iter).AND.(eps_adap(iter).ge.min_eps_adap*1.0_r8).AND.(.not.early_stop))
 
-   if (my_task_id().eq.0) then
+!   if (my_task_id().eq.0) then
 !      write(*,*) 'PFF iteration ', iter
-      write(12, rec=iter) state_ens_handle%copies(1:ens_size,1:n_my_state)
-   endif
+!      write(12, rec=iter) state_ens_handle%copies(1:ens_size,1:n_my_state)
+!   endif
 
    call get_obs_ens_distrib_state(state_ens_handle, obs_fwd_op_ens_handle, &
            qc_ens_handle, seq, keys, obs_val_index, input_qc_index, &
            OBS_ERR_VAR_COPY, OBS_VAL_COPY, OBS_KEY_COPY, OBS_GLOBAL_QC_COPY, &
            OBS_EXTRA_QC_COPY, OBS_MEAN_START, OBS_VAR_START, &
            isprior=.true., prior_qc_copy=prior_qc_copy)
+   
+   if (my_task_id().eq.0) then
+       write(12, rec=iter) obs_fwd_op_ens_handle%copies(1:ens_size,1:n_my_obs)
+   endif
 
    ! Check on the inner domain info
    call output_inner_domain_info(50 + my_task_id())
