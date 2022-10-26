@@ -1322,6 +1322,7 @@ type(location_type):: inner_loc(Ni)
 
 !character:: output_name*50
 
+!print*, inner_pmatrix(:,1)
 
 !write(*,*) '(obs_increment_pff) cutoff = ',cutoff
 
@@ -1365,7 +1366,6 @@ do i=1,Ni
    enddo
 enddo
 
-
 ! calculate the inverse of prior covariance matrix:
 ! CAUTIOUS!! by calling the subroutine "inverse" might actually change the value of
 ! prior_cov. Need to check the code for why?
@@ -1389,7 +1389,7 @@ input_x = inner_cmatrix
 !write(*,*) 'before call input_x = ',input_x(1:5,1)
 
 ! METHOD 1: linear regression: ======
-!call HT_regress(HT, input_x, ens, ens_size, Ni,0.001*1.0_r8)
+call HT_regress(HT, input_x, ens, ens_size, Ni,0.001*1.0_r8)
 ! ===================================
 
 !write(*,*) 'after inner_c (first member) =',inner_cmatrix(1,:)
@@ -1398,7 +1398,7 @@ input_x = inner_cmatrix
 !input_x = inner_cmatrix
 
 ! METHOD 2: kernel approx: ==========
-call HT_kernel(HT, input_x, ens, ens_size, Ni, 0.05*1.0_r8)
+! call HT_kernel(HT, input_x, ens, ens_size, Ni, 0.05*1.0_r8)
 ! ===================================
 
 !write(*,*) 'kernel adjoint = ',HT(ens_size,:)
@@ -1491,7 +1491,7 @@ ker_alpha = 20/(ens_size*1.0_r8)*(Ni*1.0_r8)
 ! different error * adaptive (in each iteration) part of the learning rate
 !if (base_obs_type.le.0) then 
 !   eps_type = 0.1 ! for identity obs
-    eps_type = 0.1
+    eps_type = 0.0001
 !endif
 
 hx_mean = sum(ens)/(1.0_r8*ens_size)
@@ -1500,7 +1500,6 @@ hx_var  = sum((ens-hx_mean)**2)/(1.0_r8*(ens_size-1))
 eps_err = min(obs_var/hx_var,1.0_r8)
 
 eps = eps_type*eps_err*eps_adap(iter)
-
 
 !write(*,*) 'eps (without eps_adap) = ', eps/eps_adap(iter)
 
