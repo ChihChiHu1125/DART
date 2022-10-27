@@ -1,7 +1,7 @@
  obs_sequence
 obs_type_definitions
            1
-           5 RADIOSONDE_TEMPERATURE         
+           4 RADIOSONDE_SURFACE_PRESSURE    
   num_copies:            0  num_qc:            0
   num_obs:            1  max_num_obs:            1
   first:            1  last:            1
@@ -9,8 +9,8 @@ obs_type_definitions
           -1          -1          -1
 obdef
 loc3d
-     2.120575041173110        0.4363323129985824         3.000000000000000      1
+     2.111848394913139        0.4363323129985824        -1.000000000000000     -1
 kind
-           5
+           4
      0          1
-   1.0000000000000000     
+   100.00000000000000     
