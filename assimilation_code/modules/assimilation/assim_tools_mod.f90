@@ -1072,17 +1072,12 @@ deallocate(close_obs_dist,      &
            vstatus,             &
            my_obs_loc)
 
-<<<<<<< HEAD
-deallocate(n_close_state_items, &
-           n_close_obs_items)
-=======
 deallocate(close_state_dist,      &
            my_state_indx,         &
            close_state_ind,       &
            my_state_kind,         &
            my_state_loc)
 
->>>>>>> main
 ! end dealloc
 
 end subroutine filter_assim
