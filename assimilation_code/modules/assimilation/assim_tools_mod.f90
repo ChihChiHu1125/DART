@@ -1030,14 +1030,9 @@ call get_close_destroy(gc_obs)
 
 ! Assure user we have done something
 if (print_trace_details >= 0) then
-<<<<<<< HEAD
 
 if (iter.eq.1) then
-write(msgstring, '(A,I8,A)') &
-   'Processed', obs_ens_handle%num_vars, ' total observations'
-=======
    write(msgstring, '(A,I8,A)') 'Processed', obs_ens_handle%num_vars, ' total observations'
->>>>>>> main
    call error_handler(E_MSG,'filter_assim:',msgstring)
 endif
 endif
