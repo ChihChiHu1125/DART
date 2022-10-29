@@ -912,14 +912,14 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
          !   state_prior=pstate(1:ens_size, state_index))
 
          ! CCWU: Just for PFF test (NEED TO REMOVE THIS in the future)
-         local_varying_ss_inflate = .false.
-         inflate_only             = .false.     
+         !local_varying_ss_inflate = .false.
+         !inflate_only             = .false.     
       
          call obs_updates_ens(ens_size, num_groups, ens_handle%copies(1:ens_size, state_index), &
             my_state_loc(state_index), my_state_kind(state_index), obs_prior, obs_inc, &
             obs_prior_mean, obs_prior_var, base_obs_loc, base_obs_type, obs_time, &
             net_a, grp_size, grp_beg, grp_end, i, &
-            my_state_indx(state_index), final_factor, correl, local_varying_ss_inflate, inflate_only, &
+            my_state_indx(state_index), final_factor, correl, .false., .false., &
             state_prior=pstate(1:ens_size, state_index),state_increment=state_increment)
 
          ! Compute spatially-varying state space inflation
