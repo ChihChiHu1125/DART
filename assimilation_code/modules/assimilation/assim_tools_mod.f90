@@ -895,10 +895,11 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
             my_state_kind(state_index), close_state_dist(j), cutoff_rev)
 
          ! need to set state_increment to 0 for PFF:
-         if(final_factor <= 0.0_r8) then
-             state_increment = 0
-             cycle STATE_UPDATE
-         endif
+         !if(final_factor <= 0.0_r8) then
+         !    state_increment = 0
+         !    cycle STATE_UPDATE
+         !endif
+         if ( final_factor<=0.0_r8 ) cycle STATE_UPDATE
 
          ! Note: pstate: the prior values of all the state variables in my pe (sent
          ! from filter_main)
@@ -3049,12 +3050,19 @@ do group = 1, num_groups
    grp_bot = grp_beg(group); grp_top = grp_end(group)
    ! Do update of state, correl only needed for varying ss inflate
    if(correl_needed) then
-      call update_from_obs_inc(obs_prior(grp_bot:grp_top), obs_prior_mean(group), &
-         obs_prior_var(group), obs_inc(grp_bot:grp_top), ens(grp_bot:grp_top), grp_size, &
-         increment(grp_bot:grp_top), reg_coef(group), net_a(group), correl(group))
+     ! call update_from_obs_inc(obs_prior(grp_bot:grp_top), obs_prior_mean(group), &
+     !    obs_prior_var(group), obs_inc(grp_bot:grp_top), ens(grp_bot:grp_top), grp_size, &
+     !    increment(grp_bot:grp_top), reg_coef(group), net_a(group), correl(group))
+      call update_from_obs_inc(obs_prior(grp_bot:grp_top),obs_prior_mean(group), &
+         obs_prior_var(group), obs_inc(grp_bot:grp_top), state_prior, grp_size, &
+         increment(grp_bot:grp_top), reg_coef(group), net_a(group),correl(group))
+
    else
+     ! call update_from_obs_inc(obs_prior(grp_bot:grp_top), obs_prior_mean(group), &
+     !    obs_prior_var(group), obs_inc(grp_bot:grp_top), ens(grp_bot:grp_top), grp_size, &
+     !    increment(grp_bot:grp_top), reg_coef(group), net_a(group))
       call update_from_obs_inc(obs_prior(grp_bot:grp_top), obs_prior_mean(group), &
-         obs_prior_var(group), obs_inc(grp_bot:grp_top), ens(grp_bot:grp_top), grp_size, &
+         obs_prior_var(group), obs_inc(grp_bot:grp_top), state_prior, grp_size, &
          increment(grp_bot:grp_top), reg_coef(group), net_a(group))
    endif
 end do
