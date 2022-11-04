@@ -1,7 +1,7 @@
 &perfect_model_obs_nml
-   read_input_state_from_file  = .true.,
-   single_file_in              = .true.
-   input_state_files           = "perfect_input.nc"
+   read_input_state_from_file = .true.,
+   single_file_in             = .true.
+   input_state_files          = "truth_restart_for_DA.nc"
 
    write_output_state_to_file = .true.,
    single_file_out            = .true.
@@ -29,7 +29,7 @@
 
 &filter_nml
    single_file_in               = .true.,
-   input_state_files            = 'filter_input.nc'
+   input_state_files            = 'ensemble_ic.nc'
    input_state_file_list        = ''
 
    stages_to_write  = 'preassim', 'analysis', 'output'

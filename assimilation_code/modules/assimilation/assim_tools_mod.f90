@@ -1283,7 +1283,6 @@ type(location_type):: inner_loc(Ni)
 
 !character:: output_name*50
 
-
 !write(*,*) '(obs_increment_pff) cutoff = ',cutoff
 
 ! Get the location informaiton for inner domain:
@@ -1452,8 +1451,17 @@ ker_alpha = 20/(ens_size*1.0_r8)*(Ni*1.0_r8)
 ! different error * adaptive (in each iteration) part of the learning rate
 !if (base_obs_type.le.0) then 
 !   eps_type = 0.1 ! for identity obs
-    eps_type = 0.1
+!    eps_type = 0.1
 !endif
+
+select case (base_obs_type)
+  case(4)
+    print*,'obs type = surface pressure'
+    eps_type = 0.2
+  case default
+    print*,'unknown obs type'
+    eps_type = 0.1
+end select
 
 hx_mean = sum(ens)/(1.0_r8*ens_size)
 hx_var  = sum((ens-hx_mean)**2)/(1.0_r8*(ens_size-1))

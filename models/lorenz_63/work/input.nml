@@ -29,14 +29,14 @@
 
 &filter_nml
    single_file_in               = .true.,
-   input_state_files            = ''
-   input_state_file_list        = 'filter_input_list.txt'
+   input_state_files            = 'ens_free_forecast_day20.nc'
+   input_state_file_list        = ''
 
    stages_to_write  = 'preassim', 'analysis', 'output'
 
    single_file_out              = .true.,
-   output_state_files           = ''
-   output_state_file_list       = 'filter_output_list.txt'
+   output_state_files           = 'ens_DA_output_day20.nc'
+   output_state_file_list       = ''
    output_interval              = 1,
    output_members               = .true.
    num_output_state_members     = 20,
@@ -56,8 +56,8 @@
    obs_sequence_in_name         = "obs_seq.out",
    obs_sequence_out_name        = "obs_seq.final",
    num_output_obs_members       = 20,
-   init_time_days               = 0,
-   init_time_seconds            = 0,
+   init_time_days               = -1,
+   init_time_seconds            = -1,
    first_obs_days               = -1,
    first_obs_seconds            = -1,
    last_obs_days                = -1,
@@ -94,7 +94,7 @@
 
 &assim_tools_nml
    filter_kind                     = 1,
-   cutoff                          = 0.00001,
+   cutoff                          = 0.2,
    sort_obs_inc                    = .false.,
    spread_restoration              = .false.,
    sampling_error_correction       = .false.,
@@ -121,8 +121,7 @@
    /
 
 &obs_kind_nml
-   assimilate_these_obs_types = 'RAW_STATE_VARIABLE'
-   evaluate_these_obs_types   = ''
+   assimilate_these_obs_types   = 'RAW_STATE_VARIABLE'
    /
 
 &model_nml

@@ -1650,7 +1650,8 @@ call init_random_seq(r, my_task_id()+1)
 do i = 1, ens_handle%my_num_vars
    if (ens_handle%my_vars(i) >= temp_start .and. ens_handle%my_vars(i) <= temp_end) then
       do j = 1, ens_size
-         ens_handle%copies(j,i) = random_gaussian(r, ens_handle%copies(j,i), model_pert_amp)
+         !ens_handle%copies(j,i) = random_gaussian(r, ens_handle%copies(j,i), model_pert_amp)
+          ens_handle%copies(j,i) = random_gaussian(r, ens_handle%copies(j,i), pert_amp)
       enddo
    endif
 enddo
