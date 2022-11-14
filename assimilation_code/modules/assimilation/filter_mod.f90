@@ -377,6 +377,10 @@ real(r8) :: eps_adap(max_iter)
 real(r8) :: eps_adap_decrease, min_eps_adap
 logical :: pff_update, early_stop
 
+! adaptive kernel width
+real(r8), allocatable :: initial_ker_alpha(:)
+
+
 call filter_initialize_modules_used() ! static_init_model called in here
 
 ! Read the namelist entry
@@ -889,27 +893,30 @@ AdvanceTime : do
    iter = 1
 
    ! Save the state during all iterations:
-   if (my_task_id().eq.0) then   
-      output_name='./output/PFF_test0630.dat'
-      n_my_state=state_ens_handle%my_num_vars
-      open(12,file=output_name,status='unknown',form='unformatted',access='direct',recl=8*n_my_state*ens_size)
+   !if (my_task_id().eq.0) then   
+   !   output_name='./output/PFF_test0630.dat'
+   !   n_my_state=state_ens_handle%my_num_vars
+   !   open(12,file=output_name,status='unknown',form='unformatted',access='direct',recl=8*n_my_state*ens_size)
       !write(*,*) state_ens_handle%my_vars
-   endif
+   !endif
 
    eps_adap = 1 ! initial value for learning rate
-   min_eps_adap = 0.0001 ! when eps_adap lower than this value, exit the while-loop
+   min_eps_adap = 0.1 ! when eps_adap lower than this value, exit the while-loop
 
    allocate(pff_norm_total(obs_fwd_op_ens_handle%num_vars,max_iter))
    pff_norm_total = 0
    pff_update=.true.
    early_stop=.false.
 
+   allocate(initial_ker_alpha(obs_fwd_op_ens_handle%num_vars))
+   initial_ker_alpha = 1.0_r8
+
 do while ((iter.le.max_iter).AND.(eps_adap(iter).ge.min_eps_adap*1.0_r8).AND.(.not.early_stop))
 
-   if (my_task_id().eq.0) then
+   !if (my_task_id().eq.0) then
 !      write(*,*) 'PFF iteration ', iter
-      write(12, rec=iter) state_ens_handle%copies(1:ens_size,1:n_my_state)
-   endif
+   !   write(12, rec=iter) state_ens_handle%copies(1:ens_size,1:n_my_state)
+   !endif
 
    call get_obs_ens_distrib_state(state_ens_handle, obs_fwd_op_ens_handle, &
            qc_ens_handle, seq, keys, obs_val_index, input_qc_index, &
@@ -1004,8 +1011,11 @@ do while ((iter.le.max_iter).AND.(eps_adap(iter).ge.min_eps_adap*1.0_r8).AND.(.n
       OBS_VAR_END, inflate_only = .false., iter=iter, &
       pinner=inner_prior,pstate=state_prior, &
       state_inc=state_inc, pff_norm_total=pff_norm_total,&
-      pff_update=pff_update, eps_adap=eps_adap, early_stop=early_stop)
-
+      pff_update=pff_update, eps_adap=eps_adap, early_stop=early_stop, &
+      initial_ker_alpha=initial_ker_alpha)
+   !if ((my_task_id().eq.0).and.(iter.eq.1)) then
+   !   print*, 'initial_ker_alpha = ', initial_ker_alpha
+   !endif
 
    ! PFF clear info in the inner domain
    call clear_inner_domain
@@ -1051,6 +1061,8 @@ END DO ! PFF iteration
    deallocate(inner_prior)
    deallocate(output)
    deallocate(pff_norm_total)
+   deallocate(initial_ker_alpha)
+
 
    call timestamp_message('After  observation assimilation')
    call     trace_message('After  observation assimilation')

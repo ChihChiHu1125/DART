@@ -194,7 +194,6 @@ logical  :: distribute_mean  = .false.
 ! variables within all the obs
 integer, parameter :: max_ni = 50
 
-
 namelist / assim_tools_nml / filter_kind, cutoff, sort_obs_inc, &
    spread_restoration, sampling_error_correction,                          &
    adaptive_localization_threshold, adaptive_cutoff_floor,                 &
@@ -313,7 +312,7 @@ subroutine filter_assim(ens_handle, obs_ens_handle, obs_seq, keys,           &
    ENS_INF_COPY, ENS_INF_SD_COPY, OBS_KEY_COPY, OBS_GLOBAL_QC_COPY,          &
    OBS_PRIOR_MEAN_START, OBS_PRIOR_MEAN_END, OBS_PRIOR_VAR_START,            &
    OBS_PRIOR_VAR_END, inflate_only, iter, pinner, pstate, state_inc,         &
-   pff_norm_total, pff_update, eps_adap, early_stop)
+   pff_norm_total, pff_update, eps_adap, early_stop, initial_ker_alpha)
 
 type(ensemble_type),         intent(inout) :: ens_handle, obs_ens_handle
 type(obs_sequence_type),     intent(in)    :: obs_seq
@@ -422,6 +421,11 @@ real(r8) :: pff_norm_per_last_iter, pff_norm_per_this_iter
 logical,  intent(out),  optional :: pff_update
 logical,  intent(out),  optional :: early_stop
 integer  :: max_iter
+
+! CCWU: for adaptive kernel width
+real(r8), intent(inout), optional :: initial_ker_alpha(:)
+real(r8)                          :: initial_alpha ! temporary storage for initial alpha
+
 
 ! allocate rather than dump all this on the stack
 allocate(close_obs_dist(     obs_ens_handle%my_num_vars), &
@@ -602,7 +606,6 @@ allow_missing_in_state = get_missing_ok_status()
 allocate(state_inc(ens_size, ens_handle%my_num_vars))
 state_inc = 0
 
-
 ! Loop through all the (global) observations sequentially
 
 SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
@@ -779,12 +782,18 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
       grp_bot = grp_beg(group); grp_top = grp_end(group)
 
    ! CCWU:: call the filter (PFF) here:
+
+      initial_alpha = initial_ker_alpha(i)     
+ 
       call obs_increment(obs_prior(grp_bot:grp_top), grp_size, &
            obs(1), obs_err_var, obs_inc(grp_bot:grp_top), inflate, my_inflate,   &
            my_inflate_sd, net_a(group), &
-           iter=iter, Ni=Ni, inner_p=inner_prior(1:ens_size*Ni),inner_c=inner_current(1:ens_size*Ni), & 
+           iter=iter, the_nth_obs=i, initial_alpha=initial_alpha,Ni=Ni,  &
+           inner_p=inner_prior(1:ens_size*Ni),inner_c=inner_current(1:ens_size*Ni), & 
            inner_ind=inner_index(1:Ni), inner_inc=inner_inc,norm_inc=norm_inc,eps_adap=eps_adap, &
            base_obs_type=base_obs_type)
+
+      if ( iter.eq.1 ) initial_ker_alpha(i) = initial_alpha
 
       ! Also compute prior mean and variance of obs for efficiency here
       obs_prior_mean(group) = sum(obs_prior(grp_bot:grp_top)) / grp_size
@@ -982,8 +991,8 @@ end do SEQUENTIAL_OBS
 ! CCWU important step for adaptive learning rate in PFF:
 ! determine now if we would like to add the increment to the current state
 
-norm_increase_tolerance = 1.2
-early_stop_criterion    = 1 ! 5% of the initial norm value
+norm_increase_tolerance = 5
+early_stop_criterion    = 0.5 ! (?)% of the initial norm value
 ! calculate the norm of the increments:
 pff_norm_per_last_iter = sqrt(sum(pff_norm_total(:,max(iter-1,1)))/sum(pff_norm_total(:,1)))*100
 pff_norm_per_this_iter = sqrt(sum(pff_norm_total(:,iter))/sum(pff_norm_total(:,1)))*100
@@ -1086,7 +1095,7 @@ end subroutine filter_assim
 !-------------------------------------------------------------
 
 subroutine obs_increment(ens_in, ens_size, obs, obs_var, obs_inc, &
-   inflate, my_cov_inflate, my_cov_inflate_sd,  net_a, iter, Ni, inner_p, inner_c, inner_ind, inner_inc, norm_inc, &
+   inflate, my_cov_inflate, my_cov_inflate_sd,  net_a, iter, the_nth_obs, initial_alpha,  Ni, inner_p, inner_c, inner_ind, inner_inc, norm_inc, &
    eps_adap, base_obs_type)
 
 ! Given the ensemble prior for an observation, the observation, and
@@ -1109,7 +1118,7 @@ real(r8) :: rel_weights(ens_size)
 ! CCWU
 ! PFF input and output
 ! the size of inner_p (prior) and inner_c (current) should be (# ens_size) * (# inner domain var):
-integer,     intent(in), optional :: iter
+integer,     intent(in), optional :: iter, the_nth_obs
 integer,     intent(in)           :: Ni
 integer(i8), intent(in), optional :: inner_ind(Ni)
 integer,     intent(in), optional :: base_obs_type ! the obs type
@@ -1119,6 +1128,9 @@ real(r8),   intent(out), optional :: inner_inc(ens_size, Ni)
 real(r8),   intent(out), optional :: norm_inc
 real(r8) :: inner_pmatrix(ens_size, Ni),inner_cmatrix(ens_size, Ni)
 integer  :: j
+
+! adapative kernel width
+real(r8), intent(inout), optional :: initial_alpha
 
 ! CCWU
 ! first reshape the input vector to the matrix form
@@ -1207,7 +1219,7 @@ filter_kind = 9
    else if(filter_kind == 8) then
       call obs_increment_rank_histogram(ens, ens_size, prior_var, obs, obs_var, obs_inc)
    else if(filter_kind == 9) then
-      call obs_increment_pff(iter, ens, ens_size, inner_pmatrix, inner_cmatrix, inner_ind, Ni, obs, obs_var, inner_inc,norm_inc,eps_adap,base_obs_type)
+      call obs_increment_pff(iter, ens, ens_size, inner_pmatrix, inner_cmatrix, inner_ind, Ni, obs, obs_var, inner_inc,norm_inc,eps_adap,base_obs_type,the_nth_obs,initial_alpha)
    else
       call error_handler(E_ERR,'obs_increment', &
               'Illegal value of filter_kind in assim_tools namelist [1-8 OK]', source)
@@ -1240,14 +1252,14 @@ end subroutine obs_increment
 
 
 ! CCWU subroutine PFF here:
-subroutine obs_increment_pff(iter, ens, ens_size, inner_pmatrix, inner_cmatrix, inner_ind, Ni, obs, obs_var, inner_inc, norm_inc, eps_adap, base_obs_type)
+subroutine obs_increment_pff(iter, ens, ens_size, inner_pmatrix, inner_cmatrix, inner_ind, Ni, obs, obs_var, inner_inc, norm_inc, eps_adap, base_obs_type, the_nth_obs, initial_alpha)
 !========================================================================
 !
 ! PFF version of "inner domain" increment
 
 !Use lapack_interfaces, Only: dgesvd
 
-integer,      intent(in)  :: ens_size, Ni, iter
+integer,      intent(in)  :: ens_size, Ni, iter, the_nth_obs
 integer(i8),  intent(in)  :: inner_ind(Ni)        ! the iteration index
 integer,      intent(in)  :: base_obs_type        ! the observation type
 real(r8), intent(in)  :: ens(ens_size), obs, obs_var
@@ -1272,9 +1284,14 @@ real(r8) :: hx_var, hx_mean ! variance and mean of ens
 real(r8) :: dd(Ni,Ni), cov_factor(Ni,Ni)
 real(r8) :: input_x(ens_size, Ni)
 real(r8) :: inner_inc_T(Ni, ens_size) ! temporarily used for Binv multiplication
+real(r8) :: particle_dis(ens_size, ens_size), min_kernel_value
 integer  :: i,j,k
 
 type(location_type):: inner_loc(Ni)
+
+! adaptive kernel width
+real(r8), intent(inout) :: initial_alpha
+
 
 !real(r8) :: S(2),U(4,4),VT(2,2),A(4,2)
 !real(r8),allocatable:: work(:)
@@ -1443,7 +1460,8 @@ post_pdf = like_pdf + prir_pdf
 !   ker_alpha = 1/(1.0_r8*ens_size)/Ni*10  ! tuning parameter
 !endif
 
-ker_alpha = 20/(ens_size*1.0_r8)*(Ni*1.0_r8)
+!ker_alpha = 20/(ens_size*1.0_r8)*(Ni*1.0_r8)
+!ker_alpha = 100.0_r8/(ens_size*1.0_r8)*(Ni*1.0_r8)
 !write(*,*) ker_alpha
 
 ! adaptive learning rate:
@@ -1456,12 +1474,13 @@ ker_alpha = 20/(ens_size*1.0_r8)*(Ni*1.0_r8)
 
 select case (base_obs_type)
   case(4)
-    print*,'obs type = surface pressure'
-    eps_type = 0.2
+    !print*,'obs type = surface pressure'
+    eps_type = 0.1
   case default
-    print*,'unknown obs type'
+    !print*,'unknown obs type'
     eps_type = 0.1
 end select
+
 
 hx_mean = sum(ens)/(1.0_r8*ens_size)
 hx_var  = sum((ens-hx_mean)**2)/(1.0_r8*(ens_size-1))
@@ -1503,16 +1522,48 @@ eps = eps_type*eps_err*eps_adap(iter)
 !    enddo
 !enddo
 
-
 ! Calculate the (scalar-valued) kernel and its gradient:
+!do i=1,ens_size
+!   do j=1,ens_size
+!      dx              = inner_cmatrix(i,:) - inner_cmatrix(j,:)
+!      argument        = dot_product(dx,matmul(prior_cov_inv, dx))/ker_alpha
+!      kernel(i,j)     = exp(-0.5*argument)
+!      grad_ker(i,j,:) = matmul(prior_cov_inv,dx)/ker_alpha*kernel(i,j)
+!   enddo
+!enddo
+
+! 2022/11/11 adaptive kernel width:
+do i=1,ens_size
+   do j=1,ens_size
+      dx                = inner_cmatrix(i,:) - inner_cmatrix(j,:)
+      particle_dis(i,j) = dot_product(dx,matmul(prior_cov_inv, dx))
+   enddo
+enddo
+
+if ( iter.eq.1 ) then
+   min_kernel_value = 0.1 ! set the minimum kernel value 
+   ker_alpha = -maxval(particle_dis)/log(min_kernel_value)
+   initial_alpha = ker_alpha
+else
+   ker_alpha = initial_alpha
+endif
+
+if ((my_task_id().eq.0).and.(iter.eq.1)) then
+   print*, 'the ',the_nth_obs,'-th observation kernel alpha =',ker_alpha
+endif
+
+
 do i=1,ens_size
    do j=1,ens_size
       dx              = inner_cmatrix(i,:) - inner_cmatrix(j,:)
-      argument        = dot_product(dx,matmul(prior_cov_inv, dx))/ker_alpha
-      kernel(i,j)     = exp(-0.5*argument)
-      grad_ker(i,j,:) = matmul(prior_cov_inv,dx)/ker_alpha*kernel(i,j)
+      kernel(i,j)     = exp(-particle_dis(i,j)/ker_alpha)
+      grad_ker(i,j,:) = 2*matmul(prior_cov_inv,dx)/ker_alpha*kernel(i,j)
    enddo
 enddo
+
+!if (my_task_id().eq.0) then
+!   print*, 'minimum kernel = ', minval(kernel)
+!endif
 
 !write(*,*) 'x1,x2 = ',inner_cmatrix((/1,2/),:)
 !write(*,*) 'B = ', prior_cov
