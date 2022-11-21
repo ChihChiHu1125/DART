@@ -67,7 +67,7 @@ integer, parameter :: VERTISHEIGHT      =  3  ! by height (in meters)
 integer, parameter :: VERTISSCALEHEIGHT =  4  ! by scale height (unitless)
 
 type location_type
-   private
+!   private
    real(r8) :: lon, lat        ! lon, lat are stored in radians
    real(r8) :: vloc            ! units vary based on value of which_vert
    integer  :: which_vert      ! determines if vert is level, height, pressure, ...

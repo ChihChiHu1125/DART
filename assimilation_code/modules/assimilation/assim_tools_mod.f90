@@ -1291,6 +1291,7 @@ type(location_type):: inner_loc(Ni)
 
 ! adaptive kernel width
 real(r8), intent(inout) :: initial_alpha
+integer  :: inner_var_type
 
 
 !real(r8) :: S(2),U(4,4),VT(2,2),A(4,2)
@@ -1304,8 +1305,12 @@ real(r8), intent(inout) :: initial_alpha
 
 ! Get the location informaiton for inner domain:
 do i=1,Ni
-   call get_state_meta_data(inner_ind(i), inner_loc(i))
+   call get_state_meta_data(inner_ind(i), inner_loc(i),inner_var_type)
+   print*, 'inner domain var ',i,' var type =', inner_var_type
+   print*, '  location lat  = ', inner_loc(i)%lat/3.1415*180., ' lon =',inner_loc(i)%lon/3.1415*180.
+   print*, '          height = ', inner_loc(i)%vloc,'( vert = ', inner_loc(i)%which_vert,' )'
 enddo
+
 
 !write(*,*) Ni
 !write(*,*) inner_ind
@@ -1371,7 +1376,7 @@ call HT_regress(HT, input_x, ens, ens_size, Ni,0.001*1.0_r8)
 
 !write(*,*) 'after inner_c (first member) =',inner_cmatrix(1,:)
 !write(*,*) 'after call input_x = ',input_x(1:5,1)
-!write(*,*) 'HT=',HT
+write(*,*) 'HT (member 1)=',HT(1,:)
 !input_x = inner_cmatrix
 
 ! METHOD 2: kernel approx: ==========
@@ -1478,7 +1483,7 @@ select case (base_obs_type)
     eps_type = 0.1
   case default
     !print*,'unknown obs type'
-    eps_type = 0.1
+    eps_type = 0.2
 end select
 
 

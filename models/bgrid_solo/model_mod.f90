@@ -1081,7 +1081,8 @@ end subroutine get_state_meta_data
 
 !#######################################################################
 
-recursive subroutine model_interpolate(state_handle, ens_size, location, obs_type, expected_obs, istatus)
+recursive subroutine model_interpolate(state_handle, ens_size, location, obs_type, expected_obs, istatus, &
+                                       add_inner_domain)
 
 type(ensemble_type), intent(in) :: state_handle
 integer,             intent(in) :: ens_size
@@ -1097,6 +1098,20 @@ real(r8) :: lon, lat, level, lon_lat_lev(3), pressure
 
 integer :: tmp_status(ens_size,4), e
 real(r8) :: val(2,2, ens_size), a(2, ens_size)
+
+! CCWU
+logical, intent(in), optional :: add_inner_domain
+logical :: if_add_inner_domain
+
+! CCWU
+if ( present(add_inner_domain) ) then
+   if_add_inner_domain = add_inner_domain
+else
+   if_add_inner_domain = .true.
+endif
+
+
+
 
 if ( .not. module_initialized ) call static_init_model
 
@@ -1187,13 +1202,13 @@ endif
 if(is_vertical(location, "LEVEL") .or. is_vertical(location, "SURFACE")) then
 ! Now, need to find the values for the four corners
    val(1, 1,:) =  get_val(state_handle, ens_size, &
-                     lon_below, lat_below, nint(level), obs_type)
+                     lon_below, lat_below, nint(level), obs_type, if_add_inner_domain)
    val(1, 2,:) =  get_val(state_handle, ens_size, &
-                     lon_below, lat_above, nint(level), obs_type)
+                     lon_below, lat_above, nint(level), obs_type, if_add_inner_domain)
    val(2, 1,:) =  get_val(state_handle, ens_size, &
-                     lon_above, lat_below, nint(level), obs_type)
+                     lon_above, lat_below, nint(level), obs_type, if_add_inner_domain)
    val(2, 2,:) =  get_val(state_handle, ens_size, &
-                     lon_above, lat_above, nint(level), obs_type)
+                     lon_above, lat_above, nint(level), obs_type, if_add_inner_domain)
 else
 ! Case of pressure specified in vertical
    val(1, 1,:) =  get_val_pressure(state_handle, ens_size, &
@@ -1226,12 +1241,17 @@ end subroutine model_interpolate
 
 !#######################################################################
 
-function get_val(state_handle, ens_size, lon_index, lat_index, level, itype)
+function get_val(state_handle, ens_size, lon_index, lat_index, level, itype, &
+                 add_inner_domain)
 
 type(ensemble_type), intent(in) :: state_handle
 integer, intent(in) :: lon_index, lat_index, level, itype
 integer, intent(in) :: ens_size
 real(r8) :: get_val(ens_size)
+
+! CCWU
+logical, intent(in), optional :: add_inner_domain
+logical :: if_add_inner_domain
 
 character(len = 129) :: msg_string
 integer :: model_type
@@ -1247,7 +1267,17 @@ model_type = get_varid_from_kind(itype)
 
 ! Find the index into state array and return this value
 state_index = get_dart_vector_index(lon_index, lat_index, level, dom_id, model_type)
-get_val     = get_state(state_index, state_handle)
+
+! CCWU
+!get_val     = get_state(state_index, state_handle)
+
+if ( present(add_inner_domain) ) then
+   if_add_inner_domain = add_inner_domain
+else
+   if_add_inner_domain = .true.
+endif
+
+get_val     = get_state(state_index, state_handle, add_inner_domain)
 
 end function get_val
 
@@ -1284,7 +1314,10 @@ istatus(:) = 0
 
 if(itype == QTY_TEMPERATURE .or. itype == QTY_SURFACE_PRESSURE) then
 
-   ps(1,1,:) = get_val(state_handle, ens_size, lon_index, lat_index, -1, QTY_SURFACE_PRESSURE)
+! CCWU:
+!   ps(1,1,:) = get_val(state_handle, ens_size, lon_index, lat_index, -1, QTY_SURFACE_PRESSURE)
+   ps(1,1,:) = get_val(state_handle, ens_size, lon_index, lat_index, -1, QTY_SURFACE_PRESSURE, &
+                       add_inner_domain = .false.)
 
 else
 
@@ -1294,7 +1327,8 @@ else
    if(ps_lon > 360.00_r8 .and. ps_lon < 360.00001_r8) ps_lon = 360.0_r8
 
    ps_location = set_location(ps_lon, v_lats(lat_index), -1.0_r8, VERTISSURFACE )
-   call model_interpolate(state_handle, ens_size, ps_location, QTY_SURFACE_PRESSURE, ps(1,1,:), istatus)
+   call model_interpolate(state_handle, ens_size, ps_location, QTY_SURFACE_PRESSURE, ps(1,1,:), istatus, &
+                          add_inner_domain = .false.)
 
 endif
 

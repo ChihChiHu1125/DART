@@ -68,18 +68,31 @@ end subroutine get_state_array
 !---------------------------------------------------------
 !> Gets all copies of an element of the state vector from the process who owns it
 !> Assumes ensemble complete
-function get_state(my_index, ens_handle) result (x)
+function get_state(my_index, ens_handle, add_inner_domain) result (x)
 
 real(r8) :: x(data_count) !! all copies of an element of the state vector
 
 integer(i8),         intent(in)  :: my_index !! index into state vector
 type(ensemble_type), intent(in)  :: ens_handle
 
+! CCWU
+logical, intent(in), optional    :: add_inner_domain
+logical :: if_add_inner_domain
+
+if ( present(add_inner_domain) ) then
+   if_add_inner_domain = add_inner_domain
+else
+   if_add_inner_domain = .true.
+endif
+
+
 if (current_win == MEAN_WINDOW) then
    call get_mean(x, my_index, ens_handle)
 else if (current_win == STATE_WINDOW) then
    call get_fwd(x, my_index, ens_handle)
-   call add_var_inner_domain(my_index, x)
+
+! CCWU
+   if (if_add_inner_domain)  call add_var_inner_domain(my_index, x)
    !write(my_task_id() + 50, *) 'Getting state variable ', my_index
 else
    call error_handler(E_ERR, 'get_state',' No window currently open')
