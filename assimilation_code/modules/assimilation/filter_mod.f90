@@ -259,6 +259,10 @@ real(r8) :: inf_sd_lower_bound(2)          = 0.0_r8
 ! CLM should have allow_missing_clm = .true.
 logical  :: allow_missing_clm = .false.
 
+! CCWU: FOR PFF:
+integer  :: max_iter
+real(r8) :: eps_adap_decrease, min_eps_adap
+
 
 namelist /filter_nml/ async,     &
    adv_ens_command,              &
@@ -309,7 +313,10 @@ namelist /filter_nml/ async,     &
    output_sd,                    &
    write_all_stages_at_end,      &
    write_obs_every_cycle,        & 
-   allow_missing_clm
+   allow_missing_clm,            &
+   max_iter,                     &
+   min_eps_adap,                 &
+   eps_adap_decrease
 
 !----------------------------------------------------------------
 
@@ -363,7 +370,7 @@ real(r8), allocatable   :: prior_qc_copy(:)
 
 ! CCWU:
 integer :: iter ! the iteration for PFF
-integer, parameter :: max_iter=100
+!integer, parameter :: max_iter=100
 integer :: n_my_state, n_my_obs, n_my_ens, n_inner
 integer :: jj, nobs, Ni
 character :: output_name*50
@@ -373,8 +380,8 @@ real(r8), allocatable :: state_prev_iter(:,:)
 real(r8), allocatable :: state_inc(:,:)
 real(r8), allocatable :: output(:) 
 real(r8), allocatable :: pff_norm_total(:,:)
-real(r8) :: eps_adap(max_iter)
-real(r8) :: eps_adap_decrease, min_eps_adap
+real(r8), allocatable :: eps_adap(:)
+!real(r8) :: eps_adap_decrease, min_eps_adap
 logical :: pff_update, early_stop
 
 ! adaptive kernel width
@@ -887,8 +894,8 @@ AdvanceTime : do
    ! allocate() space for the prior qc copy
    call allocate_single_copy(obs_fwd_op_ens_handle, prior_qc_copy)
 
-! CCWU: NEED TO CHECK if this is the right start location...
-
+! CCWU
+   allocate(eps_adap(max_iter))
    ! The start of PFF iteration
    iter = 1
 
@@ -911,8 +918,18 @@ AdvanceTime : do
    allocate(initial_ker_alpha(obs_fwd_op_ens_handle%num_vars))
    initial_ker_alpha = 1.0_r8
 
+   !print*, 'max_iter =',max_iter
+   !print*, '(iter.le.max_iter) = ',(iter.le.max_iter)
+   !print*, '(eps_adap(iter).ge.min_eps_adap*1.0_r8) =', (eps_adap(iter).ge.min_eps_adap*1.0_r8)
+   !print*, 'eps_adap(iter) = ', eps_adap(iter)
+   !print*, 'min_eps_adap*1.0_r8 = ', min_eps_adap*1.0_r8
+   !print*, '(.not.early_stop) = ',(.not.early_stop)
+   
+
 do while ((iter.le.max_iter).AND.(eps_adap(iter).ge.min_eps_adap*1.0_r8).AND.(.not.early_stop))
 
+   !print*, 'I am in!'
+   !print*, eps_adap
    !if (my_task_id().eq.0) then
 !      write(*,*) 'PFF iteration ', iter
    !   write(12, rec=iter) state_ens_handle%copies(1:ens_size,1:n_my_state)
@@ -1013,6 +1030,7 @@ do while ((iter.le.max_iter).AND.(eps_adap(iter).ge.min_eps_adap*1.0_r8).AND.(.n
       state_inc=state_inc, pff_norm_total=pff_norm_total,&
       pff_update=pff_update, eps_adap=eps_adap, early_stop=early_stop, &
       initial_ker_alpha=initial_ker_alpha)
+
    !if ((my_task_id().eq.0).and.(iter.eq.1)) then
    !   print*, 'initial_ker_alpha = ', initial_ker_alpha
    !endif
@@ -1027,7 +1045,7 @@ do while ((iter.le.max_iter).AND.(eps_adap(iter).ge.min_eps_adap*1.0_r8).AND.(.n
    ! adding state_inc); if pff_update=false, then go back to previous iteration
    ! with smaller eps_adap
 
-   eps_adap_decrease = 0.9 ! dercrease rate for eps_adap; used if pff_update == false
+   !eps_adap_decrease = 0.9 ! dercrease rate for eps_adap; used if pff_update == false
 
    ! 2022/06/03 test code:
    !pff_update = .true. ! temp test
@@ -1062,6 +1080,7 @@ END DO ! PFF iteration
    deallocate(output)
    deallocate(pff_norm_total)
    deallocate(initial_ker_alpha)
+   deallocate(eps_adap)
 
 
    call timestamp_message('After  observation assimilation')

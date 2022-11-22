@@ -79,6 +79,10 @@
    output_timestamps            = .false.,
    output_forward_op_errors     = .false.,
    silence                      = .false.,
+
+   max_iter                    = 100,
+   min_eps_adap                = 0.1,
+   eps_adap_decrease           = 0.9,
    /
 
 &quality_control_nml
@@ -108,6 +112,12 @@
    output_localization_diagnostics = .false.,
    localization_diagnostics_file   = 'localization_diagnostics',
    print_every_nth_obs             = 0
+
+   norm_increase_tolerance = 1.2,
+   early_stop_criterion    = 0.5,
+   
+   min_kernel_value        = 0.1,
+   eps_type                = 0.2,
    /
 
 &ensemble_manager_nml
@@ -132,7 +142,8 @@
    assimilate_these_obs_types = 'RADIOSONDE_TEMPERATURE',
                                 'RADIOSONDE_U_WIND_COMPONENT',
                                 'RADIOSONDE_V_WIND_COMPONENT',
-                                'RADIOSONDE_SURFACE_PRESSURE'
+                                'RADIOSONDE_SURFACE_PRESSURE',
+                                'RADIOSONDE_WIND_SPEED'
    /
 
 &preprocess_nml
@@ -141,7 +152,8 @@
    output_obs_qty_mod_file = '../../../assimilation_code/modules/observations/obs_kind_mod.f90'
    input_obs_def_mod_file  = '../../../observations/forward_operators/DEFAULT_obs_def_mod.F90'
    output_obs_def_mod_file = '../../../observations/forward_operators/obs_def_mod.f90'
-   obs_type_files          = '../../../observations/forward_operators/obs_def_reanalysis_bufr_mod.f90'
+   obs_type_files          = '../../../observations/forward_operators/obs_def_reanalysis_bufr_mod.f90',
+                             '../../../observations/forward_operators/obs_def_wind_speed_mod.f90'
    quantity_files          = '../../../assimilation_code/modules/observations/atmosphere_quantities_mod.f90'
    /
 

@@ -193,6 +193,9 @@ logical  :: distribute_mean  = .false.
 ! parameters used for the PFF: define the maximum number of inner domain
 ! variables within all the obs
 integer, parameter :: max_ni = 50
+real(r8) :: norm_increase_tolerance, early_stop_criterion
+real(r8) :: min_kernel_value
+real(r8) :: eps_type
 
 namelist / assim_tools_nml / filter_kind, cutoff, sort_obs_inc, &
    spread_restoration, sampling_error_correction,                          &
@@ -202,7 +205,9 @@ namelist / assim_tools_nml / filter_kind, cutoff, sort_obs_inc, &
    special_localization_obs_types, special_localization_cutoffs,           &
    distribute_mean, close_obs_caching,                                     &
    adjust_obs_impact, obs_impact_filename, allow_any_impact_values,        &
-   convert_all_state_verticals_first, convert_all_obs_verticals_first
+   convert_all_state_verticals_first, convert_all_obs_verticals_first,     &
+   norm_increase_tolerance, early_stop_criterion,                          &
+   min_kernel_value, eps_type
 
 !============================================================================
 
@@ -414,13 +419,13 @@ real(r8), dimension(3) :: ccwu_array
 real(r8), allocatable, intent(out),optional :: state_inc(:,:) ! temporary state increment storage
 
 ! CCWU: for adapative learning rate
-real(r8) :: norm_inc, norm_increase_tolerance, early_stop_criterion
+real(r8) :: norm_inc
+!real(r8) :: norm_increase_tolerance, early_stop_criterion
 real(r8), intent(in),   optional :: eps_adap(:) ! adaptive learning rate
 real(r8), intent(inout),optional :: pff_norm_total(:,:)
 real(r8) :: pff_norm_per_last_iter, pff_norm_per_this_iter
 logical,  intent(out),  optional :: pff_update
 logical,  intent(out),  optional :: early_stop
-integer  :: max_iter
 
 ! CCWU: for adaptive kernel width
 real(r8), intent(inout), optional :: initial_ker_alpha(:)
@@ -991,11 +996,12 @@ end do SEQUENTIAL_OBS
 ! CCWU important step for adaptive learning rate in PFF:
 ! determine now if we would like to add the increment to the current state
 
-norm_increase_tolerance = 5
-early_stop_criterion    = 0.5 ! (?)% of the initial norm value
+!norm_increase_tolerance = 5
+!early_stop_criterion    = 0.5 ! (?)% of the initial norm value
 ! calculate the norm of the increments:
 pff_norm_per_last_iter = sqrt(sum(pff_norm_total(:,max(iter-1,1)))/sum(pff_norm_total(:,1)))*100
 pff_norm_per_this_iter = sqrt(sum(pff_norm_total(:,iter))/sum(pff_norm_total(:,1)))*100
+
 
 ! you can temporarily turn off the adaptive learning rate algorithm by uncomment
 ! below:
@@ -1020,6 +1026,9 @@ if (pff_norm_per_this_iter.le.early_stop_criterion) then
 else
    early_stop = .false.
 endif
+
+!print*, ' iter = ', iter, 'pff_udpate = ', pff_update,' early_stop = ', early_stop
+
 
 !write(*,*) 'CCWU: state(:,1) = ', ens_handle%copies(1:5,1)
 
@@ -1049,6 +1058,10 @@ endif
 
 ! diagnostics for stats on saving calls by remembering obs at the same location.
 ! change .true. to .false. in the line below to remove the output completely.
+
+! CCWU: do not want the output!
+close_obs_caching = .false.
+
 if (close_obs_caching) then
    if (num_close_obs_cached > 0 .and. do_output()) then
       print *, "Total number of calls made    to get_close_obs for obs/states:    ", &
@@ -1279,12 +1292,14 @@ real(r8) :: post_pdf(ens_size, Ni), like_pdf(ens_size, Ni), prir_pdf(ens_size, N
 real(r8) :: ker_width(Ni)
 real(r8) :: ker_alpha
 real(r8) :: grad_ker(ens_size, ens_size, Ni)
-real(r8) :: eps, eps_type, eps_err
+real(r8) :: eps, eps_err
+!real(r8) :: eps_type
 real(r8) :: hx_var, hx_mean ! variance and mean of ens
 real(r8) :: dd(Ni,Ni), cov_factor(Ni,Ni)
 real(r8) :: input_x(ens_size, Ni)
 real(r8) :: inner_inc_T(Ni, ens_size) ! temporarily used for Binv multiplication
-real(r8) :: particle_dis(ens_size, ens_size), min_kernel_value
+real(r8) :: particle_dis(ens_size, ens_size)
+!real(r8) :: min_kernel_value
 integer  :: i,j,k
 
 type(location_type):: inner_loc(Ni)
@@ -1293,6 +1308,7 @@ type(location_type):: inner_loc(Ni)
 real(r8), intent(inout) :: initial_alpha
 integer  :: inner_var_type
 
+!print*, 'I am in the PFF increment subroutine!'
 
 !real(r8) :: S(2),U(4,4),VT(2,2),A(4,2)
 !real(r8),allocatable:: work(:)
@@ -1306,16 +1322,23 @@ integer  :: inner_var_type
 ! Get the location informaiton for inner domain:
 do i=1,Ni
    call get_state_meta_data(inner_ind(i), inner_loc(i),inner_var_type)
-   print*, 'inner domain var ',i,' var type =', inner_var_type
-   print*, '  location lat  = ', inner_loc(i)%lat/3.1415*180., ' lon =',inner_loc(i)%lon/3.1415*180.
-   print*, '          height = ', inner_loc(i)%vloc,'( vert = ', inner_loc(i)%which_vert,' )'
+!   print*, 'inner domain var ',i,' var type =', inner_var_type
+!   print*, '  location lat  = ', inner_loc(i)%lat/3.1415*180., ' lon =',inner_loc(i)%lon/3.1415*180.
+!   print*, '          height = ', inner_loc(i)%vloc,'( vert = ', inner_loc(i)%which_vert,' )'
 enddo
 
 
 !write(*,*) Ni
 !write(*,*) inner_ind
 !write(*,*) get_dist(inner_loc(1), inner_loc(2))
+!write(*,*) get_dist(inner_loc(1), inner_loc(3))
+!write(*,*) get_dist(inner_loc(1), inner_loc(4))
+!write(*,*) get_dist(inner_loc(2), inner_loc(3))
+!write(*,*) get_dist(inner_loc(2), inner_loc(4))
+!write(*,*) get_dist(inner_loc(3), inner_loc(4))
 
+
+!print*,'pass inner domain 1'
 ! compute the localization factor for each pair of inner domain variables:
 do i=1,Ni
    do j=1,Ni
@@ -1328,6 +1351,7 @@ do i=1,Ni
       endif
    enddo
 enddo
+!print*, 'pass inner domain 2'
 
 !write(*,*) 'dd = ',dd
 !write(*,*) 'cov_factor = ', cov_factor 
@@ -1376,7 +1400,7 @@ call HT_regress(HT, input_x, ens, ens_size, Ni,0.001*1.0_r8)
 
 !write(*,*) 'after inner_c (first member) =',inner_cmatrix(1,:)
 !write(*,*) 'after call input_x = ',input_x(1:5,1)
-write(*,*) 'HT (member 1)=',HT(1,:)
+!write(*,*) 'HT (member 1)=',HT(1,:)
 !input_x = inner_cmatrix
 
 ! METHOD 2: kernel approx: ==========
@@ -1477,14 +1501,17 @@ post_pdf = like_pdf + prir_pdf
 !    eps_type = 0.1
 !endif
 
-select case (base_obs_type)
-  case(4)
-    !print*,'obs type = surface pressure'
-    eps_type = 0.1
-  case default
-    !print*,'unknown obs type'
-    eps_type = 0.2
-end select
+
+! 2022/11/21: fix eps_type for now (the value is via input.nml)
+!             in the future, better fix an optimal eps_type for each obs type
+!select case (base_obs_type)
+!  case(4)
+!    !print*,'obs type = surface pressure'
+!    eps_type = 0.1
+!  case default
+!    !print*,'unknown obs type'
+!    eps_type = 0.2
+!end select
 
 
 hx_mean = sum(ens)/(1.0_r8*ens_size)
@@ -1546,16 +1573,16 @@ do i=1,ens_size
 enddo
 
 if ( iter.eq.1 ) then
-   min_kernel_value = 0.1 ! set the minimum kernel value 
+!   min_kernel_value = 0.1 ! set the minimum kernel value 
    ker_alpha = -maxval(particle_dis)/log(min_kernel_value)
    initial_alpha = ker_alpha
 else
    ker_alpha = initial_alpha
 endif
 
-if ((my_task_id().eq.0).and.(iter.eq.1)) then
-   print*, 'the ',the_nth_obs,'-th observation kernel alpha =',ker_alpha
-endif
+!if ((my_task_id().eq.0).and.(iter.eq.1)) then
+!   print*, 'the ',the_nth_obs,'-th observation kernel alpha =',ker_alpha
+!endif
 
 
 do i=1,ens_size
@@ -1566,9 +1593,9 @@ do i=1,ens_size
    enddo
 enddo
 
-!if (my_task_id().eq.0) then
-!   print*, 'minimum kernel = ', minval(kernel)
-!endif
+if ((my_task_id().eq.0).and.(iter.eq.1)) then
+   print*, 'minimum kernel = ', minval(kernel)
+endif
 
 !write(*,*) 'x1,x2 = ',inner_cmatrix((/1,2/),:)
 !write(*,*) 'B = ', prior_cov
