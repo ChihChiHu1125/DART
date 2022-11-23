@@ -196,6 +196,7 @@ integer, parameter :: max_ni = 50
 real(r8) :: norm_increase_tolerance, early_stop_criterion
 real(r8) :: min_kernel_value
 real(r8) :: eps_type
+real(r8) :: min_eig_ratio
 
 namelist / assim_tools_nml / filter_kind, cutoff, sort_obs_inc, &
    spread_restoration, sampling_error_correction,                          &
@@ -207,7 +208,7 @@ namelist / assim_tools_nml / filter_kind, cutoff, sort_obs_inc, &
    adjust_obs_impact, obs_impact_filename, allow_any_impact_values,        &
    convert_all_state_verticals_first, convert_all_obs_verticals_first,     &
    norm_increase_tolerance, early_stop_criterion,                          &
-   min_kernel_value, eps_type
+   min_kernel_value, eps_type, min_eig_ratio
 
 !============================================================================
 
@@ -1232,7 +1233,7 @@ filter_kind = 9
    else if(filter_kind == 8) then
       call obs_increment_rank_histogram(ens, ens_size, prior_var, obs, obs_var, obs_inc)
    else if(filter_kind == 9) then
-      call obs_increment_pff(iter, ens, ens_size, inner_pmatrix, inner_cmatrix, inner_ind, Ni, obs, obs_var, inner_inc,norm_inc,eps_adap,base_obs_type,the_nth_obs,initial_alpha)
+      call obs_increment_pff(iter, ens, ens_size, inner_pmatrix, inner_cmatrix, inner_ind, Ni, obs, obs_var, inner_inc, norm_inc, eps_adap, base_obs_type, the_nth_obs, initial_alpha)
    else
       call error_handler(E_ERR,'obs_increment', &
               'Illegal value of filter_kind in assim_tools namelist [1-8 OK]', source)
@@ -1385,7 +1386,7 @@ input_inverse = prior_cov ! input_inverse is a dummy variable that passes prior_
 !write(*,*) '(call inverse) prior cov inv = ',prior_cov_inv
 
 ! use SVD to calculate the inverse of prior covariance (of inner domain)
-call svd_pseudo_inverse(input_inverse,prior_cov_inv,Ni,Ni,0.001*1.0_r8)
+call svd_pseudo_inverse(input_inverse,prior_cov_inv,Ni,Ni,min_eig_ratio)
 
 ! estimation of the adjoint of the observation operator
 !write(*,*) 'before inner_c (first member) = ',inner_cmatrix(1,:)
@@ -1395,7 +1396,7 @@ input_x = inner_cmatrix
 !write(*,*) 'before call input_x = ',input_x(1:5,1)
 
 ! METHOD 1: linear regression: ======
-call HT_regress(HT, input_x, ens, ens_size, Ni,0.001*1.0_r8)
+call HT_regress(HT, input_x, ens, ens_size, Ni, min_eig_ratio)
 ! ===================================
 
 !write(*,*) 'after inner_c (first member) =',inner_cmatrix(1,:)
@@ -1778,23 +1779,27 @@ enddo
 
 end subroutine HT_kernel
 
-subroutine HT_regress(HT, X, Hx, Np, Ni, cond_num)
+subroutine HT_regress(HT, X, Hx, Np, Ni, inv_max_cond_num)
 ! estimate the adjoint of the observation operator, based on the ensemble
 ! input:  X   (ensemble of inner domain variables, size: #particle, #Ni)
 !         Hx  (ensemble in obs space, size: #particle)
-!         cond_num (the max condition number that a matrix can have)
+!         inv_cond_num (the inverse of the maximum condition number for the matrix). 
+!                      Note that the condition number of a matrix A, cond(A) is the 
+!                      ratio of the max eigenvalue of A to the min eigenvalue of A
+!                      By setting a "maximum" condition number, we enforce those 
+!                      "too small" eigenvalues to 0 when inverting the matrix
 !         Np = #particle
 !         Ni = #Ni
 ! output: HT (the ensemble mean adjoint, size: #particle, #Ni)
 
    implicit none
-   real(r8),    intent(in) :: X(Np, Ni), Hx(Np), cond_num
+   real(r8),    intent(in) :: X(Np, Ni), Hx(Np), inv_max_cond_num
    integer,     intent(in) :: Np, Ni
    real(r8),   intent(out) :: HT(Np,Ni)
    real(r8) :: pX(Ni,Np), HT_ensmean(Ni)
    integer  :: i
 ! first obtain the pseudo inverse of X:
-call svd_pseudo_inverse(X,pX,Np,Ni,cond_num)
+call svd_pseudo_inverse(X,pX,Np,Ni,inv_max_cond_num)
 HT_ensmean = matmul(pX, Hx)
 
 do i=1,Np
@@ -1804,7 +1809,7 @@ enddo
 end subroutine HT_regress
 
 
-subroutine svd_pseudo_inverse(A,pA,m,n,cond_num)
+subroutine svd_pseudo_inverse(A,pA,m,n,inv_max_cond_num)
       ! A is the input matrix, which has dimension mxn
       ! cond_num is the largest condition number that A can be
       ! if cond(A)>cond_num, this subroutine makes cond(A)=cond_num
@@ -1813,7 +1818,7 @@ subroutine svd_pseudo_inverse(A,pA,m,n,cond_num)
       implicit none
 
       real(r8), intent(in)   :: A(m,n)
-      real(r8), intent(in)   :: cond_num
+      real(r8), intent(in)   :: inv_max_cond_num
       integer, intent(in)   :: m,n
       real(r8), intent(out)  :: pA(n,m)
       real(r8) :: U(m,m), UT(m,m), V(n,n), VT(n,n), S_inv(n,m)
@@ -1842,7 +1847,7 @@ subroutine svd_pseudo_inverse(A,pA,m,n,cond_num)
 
       S_inv = 0
       do i=1,len_s
-         if ( S(i).ge.cond_num*S(1) ) then
+         if ( S(i).ge.inv_max_cond_num*S(1) ) then
              S_inv(i,i) = 1./S(i)
          endif
       enddo

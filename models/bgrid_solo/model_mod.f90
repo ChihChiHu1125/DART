@@ -1277,7 +1277,7 @@ else
    if_add_inner_domain = .true.
 endif
 
-get_val     = get_state(state_index, state_handle, add_inner_domain)
+get_val     = get_state(state_index, state_handle, if_add_inner_domain)
 
 end function get_val
 

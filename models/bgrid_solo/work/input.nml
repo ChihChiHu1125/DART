@@ -113,11 +113,12 @@
    localization_diagnostics_file   = 'localization_diagnostics',
    print_every_nth_obs             = 0
 
-   norm_increase_tolerance = 1.2,
+   norm_increase_tolerance = 5,
    early_stop_criterion    = 0.5,
    
    min_kernel_value        = 0.1,
    eps_type                = 0.2,
+   min_eig_ratio           = 1e-10,
    /
 
 &ensemble_manager_nml
