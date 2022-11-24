@@ -797,7 +797,7 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
            iter=iter, the_nth_obs=i, initial_alpha=initial_alpha,Ni=Ni,  &
            inner_p=inner_prior(1:ens_size*Ni),inner_c=inner_current(1:ens_size*Ni), & 
            inner_ind=inner_index(1:Ni), inner_inc=inner_inc,norm_inc=norm_inc,eps_adap=eps_adap, &
-           base_obs_type=base_obs_type)
+           base_obs_type=base_obs_type, base_obs_loc = base_obs_loc)
 
       if ( iter.eq.1 ) initial_ker_alpha(i) = initial_alpha
 
@@ -1110,7 +1110,7 @@ end subroutine filter_assim
 
 subroutine obs_increment(ens_in, ens_size, obs, obs_var, obs_inc, &
    inflate, my_cov_inflate, my_cov_inflate_sd,  net_a, iter, the_nth_obs, initial_alpha,  Ni, inner_p, inner_c, inner_ind, inner_inc, norm_inc, &
-   eps_adap, base_obs_type)
+   eps_adap, base_obs_type, base_obs_loc)
 
 ! Given the ensemble prior for an observation, the observation, and
 ! the observation error variance, computes increments and adjusts
@@ -1138,6 +1138,9 @@ integer(i8), intent(in), optional :: inner_ind(Ni)
 integer,     intent(in), optional :: base_obs_type ! the obs type
 real(r8),    intent(in), optional :: inner_p(ens_size*Ni), inner_c(ens_size*Ni)
 real(r8),    intent(in), optional :: eps_adap(:) ! adaptive learning rate
+
+type(location_type), intent(in), optional :: base_obs_loc
+
 real(r8),   intent(out), optional :: inner_inc(ens_size, Ni)
 real(r8),   intent(out), optional :: norm_inc
 real(r8) :: inner_pmatrix(ens_size, Ni),inner_cmatrix(ens_size, Ni)
@@ -1234,6 +1237,11 @@ filter_kind = 9
       call obs_increment_rank_histogram(ens, ens_size, prior_var, obs, obs_var, obs_inc)
    else if(filter_kind == 9) then
       call obs_increment_pff(iter, ens, ens_size, inner_pmatrix, inner_cmatrix, inner_ind, Ni, obs, obs_var, inner_inc, norm_inc, eps_adap, base_obs_type, the_nth_obs, initial_alpha)
+   else if(filter_kind ==10) then
+      call obs_increment_pff_obs(iter, ens, ens_size, prior_var, prior_mean, &
+                                 inner_pmatrix, inner_cmatrix, inner_ind, Ni, &
+                                 obs, obs_var, inner_inc, norm_inc, eps_adap, &
+                                 base_obs_type, the_nth_obs, initial_alpha, base_obs_loc)
    else
       call error_handler(E_ERR,'obs_increment', &
               'Illegal value of filter_kind in assim_tools namelist [1-8 OK]', source)
@@ -1262,6 +1270,169 @@ endif
 ! Get the net change in spread if obs space inflation was used
 if(do_obs_inflate(inflate)) net_a = net_a * sqrt(my_cov_inflate)
 end subroutine obs_increment
+
+
+
+! CCWU: PFF subroutine in the obs space
+subroutine obs_increment_pff_obs(iter, ens, ens_size, prior_var, prior_mean, &
+                                 inner_pmatrix, inner_cmatrix, inner_ind, Ni, obs, obs_var, &
+                                 inner_inc, norm_inc, eps_adap,base_obs_type, the_nth_obs, initial_alpha, base_obs_loc)
+!=======================================================================
+! 
+! PFF version only in the obs space (2022/11/24)
+! try to avoid any inverse of matrices (by considering the obs-state joint space)
+!
+integer,      intent(in)  :: ens_size, Ni, iter, the_nth_obs
+integer(i8),  intent(in)  :: inner_ind(Ni)        ! the iteration index
+integer,      intent(in)  :: base_obs_type        ! the observation type
+real(r8), intent(in)  :: ens(ens_size), obs, obs_var
+real(r8), intent(in)  :: inner_pmatrix(ens_size, Ni), inner_cmatrix(ens_size,Ni)
+real(r8), intent(in)  :: prior_var, prior_mean
+real(r8), intent(in)  :: eps_adap(:) ! adaptive learning rate
+type(location_type), intent(in) :: base_obs_loc
+
+real(r8), intent(out) :: obs_space_inc(ens_size, Ni)
+real(r8), intent(out) :: norm_inc
+! the following are temporary variables
+real(r8) :: prior_cov(Ni,Ni), prior_cov_inv(Ni,Ni), input_inverse(Ni,Ni)
+!real(r8) :: kernel(ens_size, ens_size, Ni) ! matrix-valued kernel
+real(r8) :: kernel(ens_size, ens_size) ! scalar-valued kernel
+real(r8) :: argument
+real(r8) :: dx(Ni)
+real(r8) :: kernel_width(Ni), prior_mean(Ni)
+real(r8) :: obs_mean, inner_mean(Ni), HT(ens_size, Ni)
+real(r8) :: post_pdf(ens_size), like_pdf(ens_size), prir_pdf(ens_size)
+real(r8) :: psi(ens_size, ens_size)
+real(r8) :: ker_width(Ni)
+real(r8) :: ker_alpha
+real(r8) :: grad_ker(ens_size, ens_size)
+real(r8) :: eps, eps_err
+!real(r8) :: eps_type
+real(r8) :: hx_var, hx_mean ! variance and mean of ens
+real(r8) :: dd(Ni,Ni), cov_factor(Ni,Ni)
+real(r8) :: input_x(ens_size, Ni)
+real(r8) :: inner_inc_T(Ni, ens_size) ! temporarily used for Binv multiplication
+real(r8) :: particle_dis(ens_size, ens_size)
+!real(r8) :: min_kernel_value
+integer  :: i,j,k
+
+type(location_type):: inner_loc(Ni)
+
+! adaptive kernel width
+real(r8), intent(inout) :: initial_alpha
+integer  :: inner_var_type
+
+! =====================================
+! STEP1: Calculate the PFF in obs space
+! =====================================
+
+! Calculate the pairwise kernel values and their gradient:
+! 2022/11/11 adaptive kernel width:
+
+do i=1,ens_size
+   do j=1,ens_size
+      dx                = ens(i) - ens(j)
+      particle_dis(i,j) = dx**2/prior_var
+   enddo
+enddo
+
+if ( iter.eq.1 ) then
+   ker_alpha = -maxval(particle_dis)/log(min_kernel_value)
+   initial_alpha = ker_alpha
+else
+   ker_alpha = initial_alpha
+endif
+
+!if ((my_task_id().eq.0).and.(iter.eq.1)) then
+!   print*, 'the ',the_nth_obs,'-th observation kernel alpha =',ker_alpha
+!endif
+
+do i=1,ens_size
+   do j=1,ens_size
+      dx            = ens(i) - ens(j)
+      kernel(i,j)   = exp(-particle_dis(i,j)/ker_alpha)
+      grad_ker(i,j) = 2*dx/ker_alpha/prior_var*kernel(i,j)
+   enddo
+enddo
+
+! evaluate the gradient of log posterior pdf
+
+do i=1,ens_size
+   do j=1,ens_size
+      psi(i,j) = exp(-(ens(i)-ens(j))**2/(2*prior_var))
+   enddo
+enddo
+
+do i=1,ens_size
+   like_pdf(i) = (obs-ens(i))/obs_var
+   prir_pdf(i) = (-ens(i) + dot_product(ens, psi(:,i))/sum(psi(:,i)))
+enddo
+
+post_pdf = like_pdf + prir_pdf
+
+! the adpative learning rate algorithm:
+! total learning rate (eps) = learning rate of different type * learning rate of
+! different error * adaptive (in each iteration) part of the learning rate
+
+! 2022/11/21: fix eps_type for now (the value is via input.nml)
+!             in the future, better fix an optimal eps_type for each obs type
+!select case (base_obs_type)
+!  case(4)
+!    !print*,'obs type = surface pressure'
+!    eps_type = 0.1
+!  case default
+!    !print*,'unknown obs type'
+!    eps_type = 0.2
+!end select
+
+hx_mean = sum(ens)/(1.0_r8*ens_size)
+hx_var  = sum((ens-hx_mean)**2)/(1.0_r8*(ens_size-1))
+! min is to avoid too large learning rate for small prior variance
+eps_err = min(obs_var/prior_var,1.0_r8)
+
+eps = eps_type*eps_err*eps_adap(iter)
+
+! evalute the particle flow
+norm_inc = 0.0_r8
+
+do i=1,ens_size
+   obs_space_inc(i) = 0.0_r8
+!  check if posterior pdf is okay:
+!   obs_space_inc(i) = eps*post_pdf(i)
+
+   do j=1,ens_size
+      obs_space_inc(i) = obs_space_inc(i) + eps*( kernel(i,j)*post_pdf(j) + grad_ker(i,j) )/(1.0_r8*ens_size)
+   enddo
+   norm_inc = norm_inc + (abs(obs_space_inc(i))/eps)**2 /(1.0_r8*Ni)
+
+end do
+
+! =====================================================
+! STEP2: Update the inner domain based on obs increment
+! =====================================================
+
+
+! Get the location informaiton for inner domain:
+do i=1,Ni
+   call get_state_meta_data(inner_ind(i), inner_loc(i),inner_var_type)
+!   print*, 'inner domain var ',i,' var type =', inner_var_type
+!   print*, '  location lat  = ', inner_loc(i)%lat/3.1415*180., ' lon
+!   =',inner_loc(i)%lon/3.1415*180.
+!   print*, '          height = ', inner_loc(i)%vloc,'( vert = ',
+!   inner_loc(i)%which_vert,' )'
+enddo
+
+! compute the localization factor for state-obs pair:
+do i=1,Ni
+   dd(i)         = get_dist(inner_loc(i), base_obs_type)
+   cov_factor(i) = comp_cov_factor(dd(i), cutoff)
+enddo
+
+
+
+
+end subroutine obs_increment_pff_obs
+
 
 
 
