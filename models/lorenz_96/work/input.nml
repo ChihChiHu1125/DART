@@ -79,6 +79,10 @@
    output_forward_op_errors     = .false.,
    write_obs_every_cycle        = .false.,
    silence                      = .false.,
+
+   max_iter                    = 100,
+   min_eps_adap                = 0.1,
+   eps_adap_decrease           = 0.9,
    /
 
 &smoother_nml
@@ -107,6 +111,13 @@
    print_every_nth_obs             = 0,
    rectangular_quadrature          = .true.,
    gaussian_likelihood_tails       = .false.,
+
+   norm_increase_tolerance = 1.2,
+   early_stop_criterion    = 0.5,
+
+   min_kernel_value        = 0.1,
+   eps_type                = 0.05,
+   min_eig_ratio           = 1e-10,
    /
 
 &cov_cutoff_nml

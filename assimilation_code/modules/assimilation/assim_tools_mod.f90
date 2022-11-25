@@ -432,6 +432,8 @@ logical,  intent(out),  optional :: early_stop
 real(r8), intent(inout), optional :: initial_ker_alpha(:)
 real(r8)                          :: initial_alpha ! temporary storage for initial alpha
 
+type(location_type) :: inner_var_loc
+integer             :: inner_var_type
 
 ! allocate rather than dump all this on the stack
 allocate(close_obs_dist(     obs_ens_handle%my_num_vars), &
@@ -882,8 +884,8 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
       !base_obs_loc   =
       !base_obs_type  =
 
-      call get_state_meta_data(inner_index(inner),base_obs_loc) 
-      base_obs_type  = -inner_index(inner)
+      call get_state_meta_data(inner_index(inner),inner_var_loc) 
+      inner_var_type  = -inner_index(inner)
       !write(*,*) 'base_obs_type = ', base_obs_type
 
       !close_state_dist(j) =
@@ -896,7 +898,8 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
          ! my_state_loc(state_index) should be the location of the j-th state
          ! needs to be updated (j=1,num_close_states)
 
-         close_state_dist(j) = get_dist(base_obs_loc, my_state_loc(state_index))
+         !close_state_dist(j) = get_dist(base_obs_loc, my_state_loc(state_index))
+         close_state_dist(j) = get_dist(inner_var_loc, my_state_loc(state_index))
          !write(*,*) 'dist between ',state_index,'and inner domain',base_obs_type, 'is ', close_state_dist(j)
 
          if ( allow_missing_in_state ) then
@@ -906,8 +909,11 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
 
          ! Compute the covariance localization and adjust_obs_impact factors
          ! (module storage)
-         final_factor = cov_and_impact_factors(base_obs_loc, base_obs_type, my_state_loc(state_index), &
-            my_state_kind(state_index), close_state_dist(j), cutoff_rev)
+         !final_factor = cov_and_impact_factors(base_obs_loc, base_obs_type, my_state_loc(state_index), &
+         !   my_state_kind(state_index), close_state_dist(j), cutoff_rev)
+
+         final_factor = cov_and_impact_factors(inner_var_loc, inner_var_type, my_state_loc(state_index), &
+                                               my_state_kind(state_index), close_state_dist(j), cutoff_rev)
 
          ! need to set state_increment to 0 for PFF:
          !if(final_factor <= 0.0_r8) then
@@ -931,12 +937,27 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
          !local_varying_ss_inflate = .false.
          !inflate_only             = .false.     
       
+         !call obs_updates_ens(ens_size, num_groups, ens_handle%copies(1:ens_size, state_index), &
+         !   my_state_loc(state_index), my_state_kind(state_index), obs_prior, obs_inc, &
+         !   obs_prior_mean, obs_prior_var, base_obs_loc, base_obs_type, obs_time, &
+         !   net_a, grp_size, grp_beg, grp_end, i, &
+         !   my_state_indx(state_index), final_factor, correl, .false., .false., &
+         !   state_prior=pstate(1:ens_size, state_index),state_increment=state_increment)
+
          call obs_updates_ens(ens_size, num_groups, ens_handle%copies(1:ens_size, state_index), &
             my_state_loc(state_index), my_state_kind(state_index), obs_prior, obs_inc, &
-            obs_prior_mean, obs_prior_var, base_obs_loc, base_obs_type, obs_time, &
+            obs_prior_mean, obs_prior_var, inner_var_loc, inner_var_type, obs_time, &
             net_a, grp_size, grp_beg, grp_end, i, &
             my_state_indx(state_index), final_factor, correl, .false., .false., &
-            state_prior=pstate(1:ens_size, state_index),state_increment=state_increment)
+            state_prior=pstate(1:ens_size,state_index),state_increment=state_increment)
+
+         !print*, 'the ',j,'th state var to update.'
+         !print*, 'the type is =', my_state_kind(state_index)
+         !print*, '  location lat  = ', my_state_loc(state_index)%lat/3.1415*180., &
+         !                  ' lon  = ', my_state_loc(state_index)%lon/3.1415*180.
+         !print*, '          height = ', my_state_loc(state_index)%vloc
+         !print*, 'state_increment  = ', state_increment(1)
+
 
          ! Compute spatially-varying state space inflation
          if(local_varying_ss_inflate) then
@@ -1213,7 +1234,7 @@ else if (prior_var == 0.0_r8) then
 
 else
 ! CCWU (test PFF) SO...
-filter_kind = 9
+filter_kind = 10
    ! Call the appropriate filter option to compute increments for ensemble
    ! note that at this point we've taken care of the cases where either the
    ! obs_var or the prior_var is 0, so the individual routines no longer need
@@ -1238,10 +1259,11 @@ filter_kind = 9
    else if(filter_kind == 9) then
       call obs_increment_pff(iter, ens, ens_size, inner_pmatrix, inner_cmatrix, inner_ind, Ni, obs, obs_var, inner_inc, norm_inc, eps_adap, base_obs_type, the_nth_obs, initial_alpha)
    else if(filter_kind ==10) then
-      call obs_increment_pff_obs(iter, ens, ens_size, prior_var, prior_mean, &
+      call obs_increment_pff_obs(ens, ens_size, prior_var, prior_mean, &
                                  inner_pmatrix, inner_cmatrix, inner_ind, Ni, &
-                                 obs, obs_var, inner_inc, norm_inc, eps_adap, &
-                                 base_obs_type, the_nth_obs, initial_alpha, base_obs_loc)
+                                 obs, obs_var, base_obs_loc, base_obs_type, the_nth_obs, &
+                                 iter, eps_adap, initial_alpha, &
+                                 inner_inc, obs_inc, norm_inc )
    else
       call error_handler(E_ERR,'obs_increment', &
               'Illegal value of filter_kind in assim_tools namelist [1-8 OK]', source)
@@ -1274,9 +1296,11 @@ end subroutine obs_increment
 
 
 ! CCWU: PFF subroutine in the obs space
-subroutine obs_increment_pff_obs(iter, ens, ens_size, prior_var, prior_mean, &
-                                 inner_pmatrix, inner_cmatrix, inner_ind, Ni, obs, obs_var, &
-                                 inner_inc, norm_inc, eps_adap,base_obs_type, the_nth_obs, initial_alpha, base_obs_loc)
+subroutine obs_increment_pff_obs(ens, ens_size, prior_var, prior_mean, &
+                                 inner_pmatrix, inner_cmatrix, inner_ind, Ni, &
+                                 obs, obs_var, base_obs_loc, base_obs_type, the_nth_obs, &
+                                 iter, eps_adap, initial_alpha, &
+                                 inner_inc, obs_space_inc, norm_inc )
 !=======================================================================
 ! 
 ! PFF version only in the obs space (2022/11/24)
@@ -1289,38 +1313,34 @@ real(r8), intent(in)  :: ens(ens_size), obs, obs_var
 real(r8), intent(in)  :: inner_pmatrix(ens_size, Ni), inner_cmatrix(ens_size,Ni)
 real(r8), intent(in)  :: prior_var, prior_mean
 real(r8), intent(in)  :: eps_adap(:) ! adaptive learning rate
+real(r8), intent(inout) :: initial_alpha
+
 type(location_type), intent(in) :: base_obs_loc
 
-real(r8), intent(out) :: obs_space_inc(ens_size, Ni)
+real(r8), intent(out) :: inner_inc(ens_size, Ni), obs_space_inc(ens_size)
 real(r8), intent(out) :: norm_inc
-! the following are temporary variables
-real(r8) :: prior_cov(Ni,Ni), prior_cov_inv(Ni,Ni), input_inverse(Ni,Ni)
-!real(r8) :: kernel(ens_size, ens_size, Ni) ! matrix-valued kernel
-real(r8) :: kernel(ens_size, ens_size) ! scalar-valued kernel
-real(r8) :: argument
-real(r8) :: dx(Ni)
-real(r8) :: kernel_width(Ni), prior_mean(Ni)
-real(r8) :: obs_mean, inner_mean(Ni), HT(ens_size, Ni)
-real(r8) :: post_pdf(ens_size), like_pdf(ens_size), prir_pdf(ens_size)
-real(r8) :: psi(ens_size, ens_size)
-real(r8) :: ker_width(Ni)
-real(r8) :: ker_alpha
-real(r8) :: grad_ker(ens_size, ens_size)
+
+! kernels
+real(r8) :: kernel(ens_size, ens_size), grad_ker(ens_size, ens_size) ! scalar-valued kernel
+real(r8) :: ker_alpha, dx, particle_dis(ens_size, ens_size)
+!real(r8) :: min_kernel_value
+
+! adapative learning rate
 real(r8) :: eps, eps_err
 !real(r8) :: eps_type
-real(r8) :: hx_var, hx_mean ! variance and mean of ens
-real(r8) :: dd(Ni,Ni), cov_factor(Ni,Ni)
-real(r8) :: input_x(ens_size, Ni)
-real(r8) :: inner_inc_T(Ni, ens_size) ! temporarily used for Binv multiplication
-real(r8) :: particle_dis(ens_size, ens_size)
-!real(r8) :: min_kernel_value
-integer  :: i,j,k
 
+! log gradient of posterior
+real(r8) :: post_pdf(ens_size), like_pdf(ens_size), prir_pdf(ens_size), psi(ens_size, ens_size)
+real(r8) :: prir_var_each_component
+
+! step 2 for the update of inner domain
+real(r8) :: dd(Ni), cov_factor(Ni)
+real(r8) :: cmean(Ni), cov_xy, pmean(Ni), pvar(Ni)
+integer  :: inner_var_type
 type(location_type):: inner_loc(Ni)
 
-! adaptive kernel width
-real(r8), intent(inout) :: initial_alpha
-integer  :: inner_var_type
+! dummy variables
+integer  :: i,j,k
 
 ! =====================================
 ! STEP1: Calculate the PFF in obs space
@@ -1356,16 +1376,17 @@ do i=1,ens_size
 enddo
 
 ! evaluate the gradient of log posterior pdf
+prir_var_each_component = prior_var/ens_size
 
 do i=1,ens_size
    do j=1,ens_size
-      psi(i,j) = exp(-(ens(i)-ens(j))**2/(2*prior_var))
+      psi(i,j) = exp(-(ens(i)-ens(j))**2/(2*prir_var_each_component))
    enddo
 enddo
 
 do i=1,ens_size
    like_pdf(i) = (obs-ens(i))/obs_var
-   prir_pdf(i) = (-ens(i) + dot_product(ens, psi(:,i))/sum(psi(:,i)))
+   prir_pdf(i) = (-ens(i) + dot_product(ens,psi(:,i))/sum(psi(:,i)))/prir_var_each_component
 enddo
 
 post_pdf = like_pdf + prir_pdf
@@ -1379,17 +1400,15 @@ post_pdf = like_pdf + prir_pdf
 !select case (base_obs_type)
 !  case(4)
 !    !print*,'obs type = surface pressure'
-!    eps_type = 0.1
+!    eps_type = 20.0
 !  case default
 !    !print*,'unknown obs type'
-!    eps_type = 0.2
+!    eps_type = 0.5
 !end select
 
-hx_mean = sum(ens)/(1.0_r8*ens_size)
-hx_var  = sum((ens-hx_mean)**2)/(1.0_r8*(ens_size-1))
 ! min is to avoid too large learning rate for small prior variance
 eps_err = min(obs_var/prior_var,1.0_r8)
-
+!print*, eps_err
 eps = eps_type*eps_err*eps_adap(iter)
 
 ! evalute the particle flow
@@ -1401,12 +1420,13 @@ do i=1,ens_size
 !   obs_space_inc(i) = eps*post_pdf(i)
 
    do j=1,ens_size
-      obs_space_inc(i) = obs_space_inc(i) + eps*( kernel(i,j)*post_pdf(j) + grad_ker(i,j) )/(1.0_r8*ens_size)
+      obs_space_inc(i) = obs_space_inc(i) + sqrt(obs_var)*eps*( kernel(i,j)*post_pdf(j) + grad_ker(i,j) )/(1.0_r8*ens_size)
    enddo
-   norm_inc = norm_inc + (abs(obs_space_inc(i))/eps)**2 /(1.0_r8*Ni)
+   norm_inc = norm_inc + (abs(obs_space_inc(i))/eps/sqrt(obs_var)) /(1.0_r8*Ni)
 
 end do
 
+!print*,'obs_inc = ', obs_space_inc(1)
 ! =====================================================
 ! STEP2: Update the inner domain based on obs increment
 ! =====================================================
@@ -1414,7 +1434,7 @@ end do
 
 ! Get the location informaiton for inner domain:
 do i=1,Ni
-   call get_state_meta_data(inner_ind(i), inner_loc(i),inner_var_type)
+   call get_state_meta_data(inner_ind(i), inner_loc(i), inner_var_type)
 !   print*, 'inner domain var ',i,' var type =', inner_var_type
 !   print*, '  location lat  = ', inner_loc(i)%lat/3.1415*180., ' lon
 !   =',inner_loc(i)%lon/3.1415*180.
@@ -1424,11 +1444,23 @@ enddo
 
 ! compute the localization factor for state-obs pair:
 do i=1,Ni
-   dd(i)         = get_dist(inner_loc(i), base_obs_type)
+   dd(i)         = get_dist(inner_loc(i), base_obs_loc)
    cov_factor(i) = comp_cov_factor(dd(i), cutoff)
 enddo
 
+! caluclate the mean of current inner domain (cmatrix)
+cmean = sum(inner_cmatrix,dim=1)/ens_size
 
+! calculate the prior variance of the inner domain (pmatrix)
+pmean = sum(inner_pmatrix,dim=1)/ens_size
+do i=1,Ni
+   pvar(i) = sum((inner_pmatrix(:,i) - pmean(i))**2) / (ens_size-1)
+enddo
+
+do i=1,Ni
+   cov_xy = dot_product(inner_cmatrix(:,i)-cmean(i), ens-prior_mean)/(ens_size-1)
+   inner_inc(:,i) = cov_xy/prior_var*obs_space_inc/sqrt(pvar(i))
+enddo
 
 
 end subroutine obs_increment_pff_obs
