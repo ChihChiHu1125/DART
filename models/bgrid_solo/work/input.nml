@@ -81,7 +81,7 @@
    silence                      = .false.,
 
    max_iter                    = 100,
-   min_eps_adap                = 0.1,
+   min_eps_adap                = 1,
    eps_adap_decrease           = 0.9,
    /
 
@@ -114,11 +114,12 @@
    print_every_nth_obs             = 0
 
    norm_increase_tolerance = 1.05,
-   early_stop_criterion    = 5,
+   early_stop_criterion    = 1,
    
    min_kernel_value        = 0.1,
-   eps_type                = 0.25,
+   eps_type                = 0.1,
    min_eig_ratio           = 1e-10,
+   prior_dist              = 1,
    /
 
 &ensemble_manager_nml

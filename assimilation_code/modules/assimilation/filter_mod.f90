@@ -375,7 +375,7 @@ integer :: n_my_state, n_my_obs, n_my_ens, n_inner
 integer :: jj, nobs, Ni
 character :: output_name*50
 real(r8), allocatable :: inner_prior(:,:,:)
-real(r8), allocatable :: state_prior(:,:)
+real(r8), allocatable :: state_prior(:,:), hx_prior(:,:)
 real(r8), allocatable :: state_prev_iter(:,:)
 real(r8), allocatable :: state_inc(:,:)
 real(r8), allocatable :: output(:) 
@@ -386,7 +386,7 @@ logical :: pff_update, early_stop
 
 ! adaptive kernel width
 real(r8), allocatable :: initial_ker_alpha(:)
-
+real(r8), allocatable :: inner_c(:)
 
 call filter_initialize_modules_used() ! static_init_model called in here
 
@@ -899,13 +899,14 @@ AdvanceTime : do
    ! The start of PFF iteration
    iter = 1
 
-   ! Save the state during all iterations:
-   !if (my_task_id().eq.0) then   
-   !   output_name='./output/PFF_test0630.dat'
-   !   n_my_state=state_ens_handle%my_num_vars
-   !   open(12,file=output_name,status='unknown',form='unformatted',access='direct',recl=8*n_my_state*ens_size)
-      !write(*,*) state_ens_handle%my_vars
-   !endif
+   !  Save the state during all iterations:
+   if (my_task_id().eq.0) then   
+      output_name='./output/PFF_test1126.dat'
+      !n_my_state=state_ens_handle%my_num_vars
+      n_my_state = 1
+      !open(12,file=output_name,status='unknown',form='unformatted',access='direct',recl=8*n_my_state*ens_size)
+     !write(*,*) state_ens_handle%my_vars
+   endif
 
    eps_adap = 1 ! initial value for learning rate
    min_eps_adap = 0.1 ! when eps_adap lower than this value, exit the while-loop
@@ -951,9 +952,10 @@ do while ((iter.le.max_iter).AND.(eps_adap(iter).ge.min_eps_adap*1.0_r8).AND.(.n
                     !                                (2) max_num_vars in inner_domain.f90
 
       state_prior = state_ens_handle%copies(1:ens_size,:) ! state_prior: prior of all the states in this pe
+      hx_prior    = obs_fwd_op_ens_handle%copies(1:ens_size,:) ! h(x) prior
 
       allocate(inner_prior(ens_size, n_inner, n_my_obs))
-      allocate(output(n_inner))
+      allocate(output(ens_size))
 
       ! write(*,*) '# obs = ', n_my_obs, '# ens =', n_my_ens 
 
@@ -1026,7 +1028,7 @@ do while ((iter.le.max_iter).AND.(eps_adap(iter).ge.min_eps_adap*1.0_r8).AND.(.n
       PRIOR_INF_COPY, PRIOR_INF_SD_COPY, OBS_KEY_COPY, OBS_GLOBAL_QC_COPY, &
       OBS_MEAN_START, OBS_MEAN_END, OBS_VAR_START, &
       OBS_VAR_END, inflate_only = .false., iter=iter, &
-      pinner=inner_prior,pstate=state_prior, &
+      pinner=inner_prior,pstate=state_prior, pobs=hx_prior, &
       state_inc=state_inc, pff_norm_total=pff_norm_total,&
       pff_update=pff_update, eps_adap=eps_adap, early_stop=early_stop, &
       initial_ker_alpha=initial_ker_alpha)
@@ -1034,6 +1036,20 @@ do while ((iter.le.max_iter).AND.(eps_adap(iter).ge.min_eps_adap*1.0_r8).AND.(.n
    !if ((my_task_id().eq.0).and.(iter.eq.1)) then
    !   print*, 'initial_ker_alpha = ', initial_ker_alpha
    !endif
+  
+   ! save inner domain info:
+   if (pff_update) then
+      ! save obs space first
+      !write(12, rec=(iter-1)*9+1) obs_fwd_op_ens_handle%copies(1:ens_size,1)
+
+      !allocate(inner_c(ens_size)) 
+      !do jj=1,8
+      !   call get_var_ens_inner_domain(1, jj, inner_c)
+      !   write(12, rec=(iter-1)*9+jj+1) inner_c
+      !enddo
+      !deallocate(inner_c)
+
+   endif
 
    ! PFF clear info in the inner domain
    call clear_inner_domain
