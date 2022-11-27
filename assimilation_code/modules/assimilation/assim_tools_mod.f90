@@ -1504,7 +1504,7 @@ do i=1,Ni
    inner_inc(:,i) = cov_xy/hx_c_var*obs_space_inc/sqrt(inner_p_var(i))
 !   inner_inc(:,i) = cov_xy/hx_p_var*obs_space_inc/sqrt(inner_p_var(i))
 
-!enddo
+enddo
 
 !do i=1,ens_size
 !   HT(i,1) = 0.25*(inner_cmatrix(i,1) + inner_cmatrix(i,2))/sqrt(hx_c(i))
