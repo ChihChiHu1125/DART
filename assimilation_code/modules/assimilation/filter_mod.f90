@@ -386,6 +386,9 @@ logical :: pff_update, early_stop
 
 ! adaptive kernel width
 real(r8), allocatable :: initial_ker_alpha(:)
+real(r8), allocatable :: inner_c(:)
+
+integer :: total_eps_decrease
 
 
 call filter_initialize_modules_used() ! static_init_model called in here
@@ -901,14 +904,15 @@ AdvanceTime : do
 
    ! Save the state during all iterations:
    !if (my_task_id().eq.0) then   
-   !   output_name='./output/PFF_test0630.dat'
-   !   n_my_state=state_ens_handle%my_num_vars
+   !   output_name='./output/PFF_obs_inner_evo.dat'
+   !!   n_my_state=state_ens_handle%my_num_vars
+   !   n_my_state = 1
    !   open(12,file=output_name,status='unknown',form='unformatted',access='direct',recl=8*n_my_state*ens_size)
-      !write(*,*) state_ens_handle%my_vars
+   !   !write(*,*) state_ens_handle%my_vars
    !endif
 
    eps_adap = 1 ! initial value for learning rate
-   min_eps_adap = 0.1 ! when eps_adap lower than this value, exit the while-loop
+   !min_eps_adap = 0.1 ! when eps_adap lower than this value, exit the while-loop
 
    allocate(pff_norm_total(obs_fwd_op_ens_handle%num_vars,max_iter))
    pff_norm_total = 0
@@ -925,6 +929,10 @@ AdvanceTime : do
    !print*, 'min_eps_adap*1.0_r8 = ', min_eps_adap*1.0_r8
    !print*, '(.not.early_stop) = ',(.not.early_stop)
    
+   allocate(obs_fwd_op_ens_handle%norm_pff_obs(obs_fwd_op_ens_handle%my_num_vars,max_iter))
+   allocate(obs_fwd_op_ens_handle%eps_pff_obs (obs_fwd_op_ens_handle%my_num_vars,max_iter))
+
+   obs_fwd_op_ens_handle%eps_pff_obs=1.0_r8 ! initialize
 
 do while ((iter.le.max_iter).AND.(eps_adap(iter).ge.min_eps_adap*1.0_r8).AND.(.not.early_stop))
 
@@ -1029,11 +1037,49 @@ do while ((iter.le.max_iter).AND.(eps_adap(iter).ge.min_eps_adap*1.0_r8).AND.(.n
       pinner=inner_prior,pstate=state_prior, &
       state_inc=state_inc, pff_norm_total=pff_norm_total,&
       pff_update=pff_update, eps_adap=eps_adap, early_stop=early_stop, &
-      initial_ker_alpha=initial_ker_alpha)
+      initial_ker_alpha=initial_ker_alpha,max_iter=max_iter, &
+      total_eps_decrease=total_eps_decrease)
+
+   if (my_task_id()==0 .and. total_eps_decrease .gt.0 ) then
+      print*,'iter ', iter,'total_eps_decrease', total_eps_decrease
+   endif
+
+   if (total_eps_decrease > 0) then
+      obs_fwd_op_ens_handle%eps_pff_obs(:,iter+1:max_iter) = &
+      obs_fwd_op_ens_handle%eps_pff_obs(:,iter+1:max_iter)*0.9
+   endif
+
+   !if (my_task_id()==0) print*, 'PE0:',obs_fwd_op_ens_handle%norm_pff_obs(1,max(iter-1,1):iter)
+   !if (my_task_id()==1) print*, 'PE1:',obs_fwd_op_ens_handle%norm_pff_obs(1,max(iter-1,1):iter)
+
 
    !if ((my_task_id().eq.0).and.(iter.eq.1)) then
    !   print*, 'initial_ker_alpha = ', initial_ker_alpha
    !endif
+
+   ! CCWU: for output diagnostics (save inner domain info)
+   !if (pff_update.and.my_task_id()==0) then
+   !   ! save obs space first
+   !   write(12, rec=(iter-1)*10+1) obs_fwd_op_ens_handle%copies(1:ens_size,1)
+   !   write(12, rec=(iter-1)*10+2) obs_fwd_op_ens_handle%copies(1:ens_size,2)
+   !
+   !
+   !   allocate(inner_c(ens_size))
+   !   do jj=1,4
+   !      call get_var_ens_inner_domain(1, jj, inner_c)
+   !      write(12, rec=(iter-1)*10+jj+2) inner_c
+   !   enddo
+   !
+   !   do jj=1,4
+   !      call get_var_ens_inner_domain(2, jj, inner_c)
+   !      write(12, rec=(iter-1)*10+jj+6) inner_c
+   !   enddo
+   !
+   !   deallocate(inner_c)
+   !
+   !endif
+
+
 
    ! PFF clear info in the inner domain
    call clear_inner_domain

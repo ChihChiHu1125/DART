@@ -1,11 +1,11 @@
 &perfect_model_obs_nml
    read_input_state_from_file = .true.,
    single_file_in             = .true.
-   input_state_files          = "truth_restart_for_DA.nc"
+   input_state_files          = "truth_restart.nc"
 
    write_output_state_to_file = .true.,
    single_file_out            = .true.
-   output_state_files         = "perfect_output.nc"
+   output_state_files         = "truth_output.nc"
    output_interval            = 1,
 
    async                      = 0,
@@ -35,19 +35,19 @@
    stages_to_write  = 'preassim', 'analysis', 'output'
 
    single_file_out              = .true.,
-   output_state_files           = 'filter_output.nc'
+   output_state_files           = 'ensemble_output.nc'
    output_state_file_list       = ''
    output_interval              = 1,
    output_members               = .true.
-   num_output_state_members     = 20,
+   num_output_state_members     = 25,
    output_mean                  = .true.
    output_sd                    = .true.
    write_all_stages_at_end      = .false.
 
-   ens_size                     = 20,
+   ens_size                     = 25,
    num_groups                   = 1,
    perturb_from_single_instance = .false.,
-   perturbation_amplitude       = 0.2,
+   perturbation_amplitude       = 0.08,
    distributed_state            = .true.
 
    async                        = 0,
@@ -55,7 +55,7 @@
 
    obs_sequence_in_name         = "obs_seq.out",
    obs_sequence_out_name        = "obs_seq.final",
-   num_output_obs_members       = 20,
+   num_output_obs_members       = 25,
    init_time_days               = 0,
    init_time_seconds            = 0,
    first_obs_days               = -1,
@@ -104,7 +104,7 @@
 
 &assim_tools_nml
    filter_kind                     = 1,
-   cutoff                          = 0.20,
+   cutoff                          = 0.2,
    sort_obs_inc                    = .false.,
    spread_restoration              = .false.,
    sampling_error_correction       = .false.,
@@ -113,11 +113,11 @@
    localization_diagnostics_file   = 'localization_diagnostics',
    print_every_nth_obs             = 0
 
-   norm_increase_tolerance = 5,
+   norm_increase_tolerance = 10,
    early_stop_criterion    = 0.5,
    
    min_kernel_value        = 0.1,
-   eps_type                = 0.2,
+   eps_type                = 0.1,
    min_eig_ratio           = 1e-10,
    /
 
@@ -331,7 +331,7 @@
    Nregions   = 1,
    lonlim1    =   0.0,  
    lonlim2    = 360.0,
-   latlim1    =   0.0,
+   latlim1    = -90.0,
    latlim2    =  90.0,
    reg_names  = 'Northern Hemisphere',
    print_mismatched_locs = .false.,

@@ -63,8 +63,16 @@ type ensemble_type
    real(r8),       allocatable  :: copies(:, :)         ! Dimensioned (num_copies, my_num_vars)
    ! Storage on next line is used when each pe has subset of copies of all vars
    real(r8),       allocatable  :: vars(:, :)           ! Dimensioned (num_vars, my_num_copies)
-   ! Storage on next line is used for kernel (only used for DART-PFF)
+   ! Storage on next few lines are used for DART-PFF only
    !real(r8),       allocatable  :: kernel(:,:,:)        ! Dimensioned (my_num_vars, num_copies, num_copies)
+   real(r8),       allocatable  :: norm_pff_obs(:,:)    ! only used for each obs_handle, 
+                                                        ! no need for state_handle
+                                                        ! Dimensioned (my_num_vars = my_num_obs, max_iter)
+   real(r8),       allocatable  :: eps_pff_obs(:,:)     ! only used for each obs_handle,
+                                                        ! no need for state_handle
+                                                        ! Dimensioned (my_num_vars = my_num_obs, max_iter)
+   real                         :: if_eps_increase      ! 0 or 1
+
    ! Time is only related to var complete
    type(time_type), allocatable :: time(:)
    integer                      :: distribution_type

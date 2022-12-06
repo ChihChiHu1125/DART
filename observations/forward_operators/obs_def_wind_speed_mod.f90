@@ -136,7 +136,9 @@ if (return_now) return
 ! system use.)
 
 where (istatus == 0) wspd = sqrt(uwind**2 + vwind**2)
-    
+ 
+!where (istatus == 0) wspd = exp(uwind/3)
+   
 end subroutine get_expected_windspeed
 
 ! ---------------------------------------------------
