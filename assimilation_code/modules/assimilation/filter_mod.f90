@@ -375,7 +375,7 @@ integer :: n_my_state, n_my_obs, n_my_ens, n_inner
 integer :: jj, nobs, Ni
 character :: output_name*50
 real(r8), allocatable :: inner_prior(:,:,:)
-real(r8), allocatable :: state_prior(:,:)
+real(r8), allocatable :: state_prior(:,:), hx_prior(:,:)
 real(r8), allocatable :: state_prev_iter(:,:)
 real(r8), allocatable :: state_inc(:,:)
 real(r8), allocatable :: output(:) 
@@ -389,7 +389,7 @@ real(r8), allocatable :: initial_ker_alpha(:)
 real(r8), allocatable :: inner_c(:)
 
 integer :: total_eps_decrease
-
+integer, allocatable :: early_stop_each_obs(:)
 
 call filter_initialize_modules_used() ! static_init_model called in here
 
@@ -899,6 +899,10 @@ AdvanceTime : do
 
 ! CCWU
    allocate(eps_adap(max_iter))
+   allocate(early_stop_each_obs(obs_fwd_op_ens_handle%num_vars))
+
+   early_stop_each_obs = 0
+
    ! The start of PFF iteration
    iter = 1
 
@@ -959,6 +963,7 @@ do while ((iter.le.max_iter).AND.(eps_adap(iter).ge.min_eps_adap*1.0_r8).AND.(.n
                     !                                (2) max_num_vars in inner_domain.f90
 
       state_prior = state_ens_handle%copies(1:ens_size,:) ! state_prior: prior of all the states in this pe
+      hx_prior    = obs_fwd_op_ens_handle%copies(1:ens_size,:) ! h(x) prior
 
       allocate(inner_prior(ens_size, n_inner, n_my_obs))
       allocate(output(n_inner))
@@ -1034,11 +1039,11 @@ do while ((iter.le.max_iter).AND.(eps_adap(iter).ge.min_eps_adap*1.0_r8).AND.(.n
       PRIOR_INF_COPY, PRIOR_INF_SD_COPY, OBS_KEY_COPY, OBS_GLOBAL_QC_COPY, &
       OBS_MEAN_START, OBS_MEAN_END, OBS_VAR_START, &
       OBS_VAR_END, inflate_only = .false., iter=iter, &
-      pinner=inner_prior,pstate=state_prior, &
+      pinner=inner_prior,pstate=state_prior, pobs=hx_prior, &
       state_inc=state_inc, pff_norm_total=pff_norm_total,&
       pff_update=pff_update, eps_adap=eps_adap, early_stop=early_stop, &
       initial_ker_alpha=initial_ker_alpha,max_iter=max_iter, &
-      total_eps_decrease=total_eps_decrease)
+      total_eps_decrease=total_eps_decrease, early_stop_each_obs=early_stop_each_obs)
 
    if (my_task_id()==0 .and. total_eps_decrease .gt.0 ) then
       print*,'iter ', iter,'total_eps_decrease', total_eps_decrease
@@ -1127,6 +1132,7 @@ END DO ! PFF iteration
    deallocate(pff_norm_total)
    deallocate(initial_ker_alpha)
    deallocate(eps_adap)
+   deallocate(early_stop_each_obs)
 
 
    call timestamp_message('After  observation assimilation')
@@ -1367,8 +1373,11 @@ endif
 
 call     trace_message('Before writing output sequence file')
 call timestamp_message('Before writing output sequence file')
+
 ! Only pe 0 outputs the observation space diagnostic file
-if(my_task_id() == 0) call write_obs_seq(seq, obs_sequence_out_name)
+! CCHU: 2022/01/03: add one more criterion: write only when async == 0:
+if( (my_task_id() == 0).and.( async ==0 ) ) call write_obs_seq(seq, obs_sequence_out_name)
+
 call timestamp_message('After  writing output sequence file')
 call     trace_message('After  writing output sequence file')
 
