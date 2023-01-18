@@ -66,8 +66,7 @@ use    utilities_mod, only : register_module
 use     location_mod, only : location_type
 use  assim_model_mod, only : interpolate
 use     obs_kind_mod, only : QTY_U_WIND_COMPONENT,  &
-                             QTY_V_WIND_COMPONENT,  &
-                             QTY_SURFACE_PRESSURE
+                             QTY_V_WIND_COMPONENT
 use  ensemble_manager_mod, only : ensemble_type
 use obs_def_utilities_mod, only : track_status
 
@@ -114,8 +113,6 @@ integer,             intent(out) :: istatus(ens_size)
 
 real(r8) :: uwind(ens_size)   ! zonal wind component
 real(r8) :: vwind(ens_size)   ! meridional wind component
-real(r8) :: slp(ens_size)     ! surface pressure
-
 integer  :: this_istatus(ens_size)
 logical  :: return_now
 
@@ -124,17 +121,12 @@ if ( .not. module_initialized ) call initialize_module
 istatus = 0   ! to use track_status, it must start out 0
 
 ! Zonal wind at this location - this calls the model_mod code.
-!call interpolate(state_handle, ens_size, location, QTY_U_WIND_COMPONENT, uwind, this_istatus)
-!call track_status(ens_size, this_istatus, wspd, istatus, return_now)
-!if (return_now) return
+call interpolate(state_handle, ens_size, location, QTY_U_WIND_COMPONENT, uwind, this_istatus)
+call track_status(ens_size, this_istatus, wspd, istatus, return_now)
+if (return_now) return
 
 ! Meridional wind at this location - this calls the model_mod code.
-!call interpolate(state_handle, ens_size, location, QTY_V_WIND_COMPONENT, vwind, istatus)
-!call track_status(ens_size, this_istatus, wspd, istatus, return_now)
-!if (return_now) return
-
-! Surface pressure at this location - this calls the model_mod code.
-call interpolate(state_handle, ens_size, location, QTY_SURFACE_PRESSURE, slp, this_istatus)
+call interpolate(state_handle, ens_size, location, QTY_V_WIND_COMPONENT, vwind, istatus)
 call track_status(ens_size, this_istatus, wspd, istatus, return_now)
 if (return_now) return
 
@@ -143,10 +135,8 @@ if (return_now) return
 ! any value > 0 indicates an error.  (values < 0 reserved for
 ! system use.)
 
-!where (istatus == 0) wspd = sqrt(uwind**2 + vwind**2)
-!where (istatus == 0) wspd = exp(uwind/3)
-where (istatus ==0) wspd = exp( (slp-100000)/500 )  
-
+where (istatus == 0) wspd = sqrt(uwind**2 + vwind**2)
+    
 end subroutine get_expected_windspeed
 
 ! ---------------------------------------------------

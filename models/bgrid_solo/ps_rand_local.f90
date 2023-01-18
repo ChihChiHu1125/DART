@@ -9,7 +9,7 @@ program ps_rand_local
 use      types_mod, only : r8, PI
 use  utilities_mod, only : get_unit, error_handler, E_ERR, initialize_utilities
 use random_seq_mod, only : random_seq_type, init_random_seq, random_uniform
-use   location_mod, only : VERTISSURFACE
+use   location_mod, only : VERTISSURFACE, VERTISLEVEL
 
 implicit none
 
@@ -28,7 +28,7 @@ call init_random_seq(r)
 
 ! Set up constants
 num_sets =  1
-level    = -1
+level    =  3
 
 ! Initializer to allow for use of functions and subroutines from utilities_mod
 call initialize_utilities('ps_rand_local')
@@ -42,6 +42,9 @@ read(*, *) num
 
 write(*, *) 'input the obs error variance'
 read(*, *) err_var
+
+write(*, *) 'input the obs level (model level)'
+read(*, *) level
 
 write(*, *) 'input a lower bound on latitude -90 to 90'
 read(*, *) bot_lat
@@ -69,10 +72,12 @@ do while(num_done < num)
    write(iunit, '(I1)') 0
 
    ! Kind is ps
-   write(iunit, '(A)') 'RADIOSONDE_SURFACE_PRESSURE'
+   !write(iunit, '(A)') 'RADIOSONDE_SURFACE_PRESSURE'
+    write(iunit, '(A)') 'RADIOSONDE_WIND_SPEED'
 
    ! Put this on model level -1
-   write(iunit, '(I2)') VERTISSURFACE
+   !write(iunit, '(I2)') VERTISSURFACE
+   write(iunit, '(I2)') VERTISLEVEL
    write(iunit, '(I2)') level
 
    ! Want randomly located in horizontal
@@ -88,7 +93,7 @@ do while(num_done < num)
    write(iunit, *) 0, 0
 
    ! Error variance
-   write(iunit, '(F5.1)') err_var
+   write(iunit, '(F10.1)') err_var
 
    num_done = num_done + 1
 

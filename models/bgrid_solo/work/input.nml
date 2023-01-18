@@ -1,12 +1,12 @@
 &perfect_model_obs_nml
    read_input_state_from_file = .true.,
    single_file_in             = .true.
-   input_state_files          = "truth_restart_for_DA.nc"
+   input_state_files          = "truth_restart.nc"
 
    write_output_state_to_file = .true.,
    single_file_out            = .true.
-   output_state_files         = "perfect_output.nc"
-   output_interval            = 1,
+   output_state_files         = "truth_output.nc"
+   output_interval            = 12,
 
    async                      = 0,
    adv_ens_command            = "../shell_scripts/advance_model.csh",
@@ -29,35 +29,35 @@
 
 &filter_nml
    single_file_in               = .true.,
-   input_state_files            = 'ensemble_ic.nc'
+   input_state_files            = 'state_output/filter_post_14_64800.nc'
    input_state_file_list        = ''
 
-   stages_to_write  = 'preassim', 'analysis', 'output'
+   stages_to_write  = 'null'
 
    single_file_out              = .true.,
-   output_state_files           = 'filter_output.nc'
+   output_state_files           = 'state_output/useless.nc'
    output_state_file_list       = ''
-   output_interval              = 1,
+   output_interval              = 10000,
    output_members               = .true.
-   num_output_state_members     = 20,
+   num_output_state_members     = 25,
    output_mean                  = .true.
    output_sd                    = .true.
    write_all_stages_at_end      = .false.
 
-   ens_size                     = 20,
+   ens_size                     = 25,
    num_groups                   = 1,
    perturb_from_single_instance = .false.,
-   perturbation_amplitude       = 0.2,
+   perturbation_amplitude       = 0.08,
    distributed_state            = .true.
 
    async                        = 0,
    adv_ens_command              = "../shell_scripts/advance_model.csh",
 
-   obs_sequence_in_name         = "obs_seq.out",
-   obs_sequence_out_name        = "obs_seq.final",
-   num_output_obs_members       = 20,
-   init_time_days               = 0,
-   init_time_seconds            = 0,
+   obs_sequence_in_name         = "observation/obs_seq.out_14_64800",
+   obs_sequence_out_name        = "obs_space_diag/obs_seq.post_14_64800",
+   num_output_obs_members       = 25,
+   init_time_days               = 14,
+   init_time_seconds            = 64800,
    first_obs_days               = -1,
    first_obs_seconds            = -1,
    last_obs_days                = -1,
@@ -79,6 +79,9 @@
    output_timestamps            = .false.,
    output_forward_op_errors     = .false.,
    silence                      = .false.,
+
+   compute_posterior            = .true.
+
    /
 
 &quality_control_nml
@@ -100,7 +103,7 @@
 
 &assim_tools_nml
    filter_kind                     = 1,
-   cutoff                          = 0.20,
+   cutoff                          = 0.2,
    sort_obs_inc                    = .false.,
    spread_restoration              = .false.,
    sampling_error_correction       = .false.,
@@ -108,6 +111,7 @@
    output_localization_diagnostics = .false.,
    localization_diagnostics_file   = 'localization_diagnostics',
    print_every_nth_obs             = 0
+
    /
 
 &ensemble_manager_nml
@@ -129,7 +133,7 @@
    /
 
 &obs_kind_nml
-   assimilate_these_obs_types = 'RADIOSONDE_TEMPERATURE',
+   evaluate_these_obs_types = 'RADIOSONDE_TEMPERATURE',
                                 'RADIOSONDE_U_WIND_COMPONENT',
                                 'RADIOSONDE_V_WIND_COMPONENT',
                                 'RADIOSONDE_SURFACE_PRESSURE',
@@ -157,7 +161,7 @@
    days     = 10,
    hours    = 0,
    minutes  = 0,
-   seconds  = 0,
+   seconds  = 10,
    noise_sd = 0.0,
    dt_bias  = -1,
    state_variables = 'ps', 'QTY_SURFACE_PRESSURE',
@@ -165,7 +169,8 @@
                      'u',  'QTY_U_WIND_COMPONENT',
                      'v',  'QTY_V_WIND_COMPONENT',
    template_file = 'perfect_input.nc'
-   /
+
+  /
 
 #
 # namelists used for cold start of bgrid core (N45L20)
@@ -311,16 +316,16 @@
    obs_sequence_name = 'obs_seq.final',
    obs_sequence_list = '',
    first_bin_center =  1601, 1,  1, 0, 0, 0 ,
-   last_bin_center  =  1601, 1, 16, 1, 0, 0 ,
+   last_bin_center  =  1601, 1, 26, 0, 0, 0 ,
    bin_separation   =     0, 0, 0, 6, 0, 0 ,
    bin_width        =     0, 0, 0, 3, 0, 0 ,
    time_to_skip     =     0, 0, 0, 0, 0, 0 ,
    max_num_bins     = 1000,
    trusted_obs      = 'null',
    Nregions   = 1,
-   lonlim1    =   0.0,
+   lonlim1    =   0.0,  
    lonlim2    = 360.0,
-   latlim1    =   0.0,
+   latlim1    = -90.0,
    latlim2    =  90.0,
    reg_names  = 'Northern Hemisphere',
    print_mismatched_locs = .false.,

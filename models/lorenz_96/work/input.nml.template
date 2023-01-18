@@ -29,13 +29,13 @@
 
 &filter_nml
    single_file_in               = .true.,
-   input_state_files            = 'state_output/filter_post_1_43200.nc'
+   input_state_files            = 'cchu_input_file_here.nc'
    input_state_file_list        = ''
 
-   stages_to_write  = 'null'
+   stages_to_write  = 'output'
 
    single_file_out              = .true.,
-   output_state_files           = 'state_output/useless.nc'
+   output_state_files           = 'cchu_output_file_here.nc'
    output_state_file_list       = ''
    output_interval              = 10000,
    output_members               = .true.
@@ -52,11 +52,11 @@
    async                        = 0,
    adv_ens_command              = "./advance_model.csh",
 
-   obs_sequence_in_name         = "observation/obs_seq.out_1_43200",
-   obs_sequence_out_name        = "obs_space_diag/obs_seq.post_1_43200",
+   obs_sequence_in_name         = "cchu_obs_seq.out",
+   obs_sequence_out_name        = "cchu_obs_seq.final",
    num_output_obs_members       = 20,
-   init_time_days               = 1,
-   init_time_seconds            = 43200,
+   init_time_days               = 0,
+   init_time_seconds            = 0,
    first_obs_days               = -1,
    first_obs_seconds            = -1,
    last_obs_days                = -1,
@@ -123,7 +123,7 @@
    /
 
 &obs_kind_nml
-   evaluate_these_obs_types =   'RAW_STATE_VARIABLE',
+   assimilate_these_obs_types =   'RAW_STATE_VARIABLE',
                                 'RAW_STATE_1D_INTEGRAL',
                                 'RAW_STATE_VAR_POWER'
    /

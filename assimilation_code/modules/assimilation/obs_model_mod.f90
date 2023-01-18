@@ -361,6 +361,15 @@ ENSEMBLE_MEMBERS: do i = 1, ens_handle%my_num_copies
          ens_handle%time(i) = ens_handle%time(i) + time_step
       end do
 
+   elseif(async == 1) then
+
+      do while(ens_handle%time(i) < target_time)
+         ! CCHU 2022/12/21: for sequential assimilation of obs:
+         !call adv_1step(ens_handle%vars(:, i), ens_handle%time(i))
+
+         ens_handle%time(i) = ens_handle%time(i) + time_step
+      end do
+
    !-------------- End single subroutine callable adv_1step interface ---------
    else
    !-------------- Block for calling shell to advance model -------------------
@@ -389,7 +398,8 @@ end do ENSEMBLE_MEMBERS
 
 
 ! Following is for async options that use shell to advance model
-SHELL_ADVANCE_METHODS: if(async /= 0) then
+!SHELL_ADVANCE_METHODS: if(async /= 0) then
+SHELL_ADVANCE_METHODS: if(async .ge. 2 ) then
 
    ! If no one needs advance, get out now.  This is a global communication routine.
    call sum_across_tasks(need_advance, any_need_advance)
