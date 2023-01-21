@@ -63,15 +63,26 @@ type ensemble_type
    real(r8),       allocatable  :: copies(:, :)         ! Dimensioned (num_copies, my_num_vars)
    ! Storage on next line is used when each pe has subset of copies of all vars
    real(r8),       allocatable  :: vars(:, :)           ! Dimensioned (num_vars, my_num_copies)
-   ! Storage on next few lines are used for DART-PFF only
-   !real(r8),       allocatable  :: kernel(:,:,:)        ! Dimensioned (my_num_vars, num_copies, num_copies)
-   real(r8),       allocatable  :: norm_pff_obs(:,:)    ! only used for each obs_handle, 
-                                                        ! no need for state_handle
-                                                        ! Dimensioned (my_num_vars = my_num_obs, max_iter)
-   real(r8),       allocatable  :: eps_pff_obs(:,:)     ! only used for each obs_handle,
-                                                        ! no need for state_handle
-                                                        ! Dimensioned (my_num_vars = my_num_obs, max_iter)
-   real                         :: if_eps_increase      ! 0 or 1
+
+   ! CCHU: Storage on next few lines are used for DART-PFF only
+   ! only for obs_handle:
+   real(r8),       allocatable  :: hx_prior(:)          ! H(x) prior 
+                                                        ! Dimensioned (ens_size)
+   real(r8),       allocatable  :: inner_prior(:,:)     ! Inner domain prior
+                                                        ! Dimensioned (ens_size, inner_domain_size)
+   real(r8),       allocatable  :: inner_inc(:,:,:)     ! Inner domain inc for each iter
+                                                        ! Dimensioned (ens_size, inner_domain_size, max_iter) 
+   real(r8),       allocatable  :: vector_norm(:,:)     ! Norm of inner domain increment for each component
+                                                        ! Dimensioned (max_ni, max_iter)
+                                                        ! max_ni = max_num_vars in inner_domain_mod
+   real(r8),       allocatable  :: scalar_norm(:)       ! Total norm of the inner domain increment
+                                                        ! Dimensioned (max_iter)
+
+   ! only for state_handle:
+   real(r8),       allocatable  :: state_prior(:,:)     ! x prior 
+                                                        ! Dimensioned (ens_size, my_num_vars)
+   real(r8),       allocatable  :: state_inc(:,:)       ! x prior
+                                                        ! Dimensioned (ens_size, my_num_vars)
 
    ! Time is only related to var complete
    type(time_type), allocatable :: time(:)
@@ -589,7 +600,17 @@ deallocate(ens_handle%my_copies, ens_handle%time, ens_handle%my_vars, &
            ens_handle%copies, ens_handle%task_to_pe_list, ens_handle%pe_to_task_list)
 
 if(allocated(ens_handle%vars)) deallocate(ens_handle%vars)
+! CCHU: also deallocate the new variables for PFF-DART:
+! variables only in obs_handle:
+if(allocated(ens_handle%hx_prior)   ) deallocate(ens_handle%hx_prior   )
+if(allocated(ens_handle%inner_prior)) deallocate(ens_handle%inner_prior)
+if(allocated(ens_handle%inner_inc)  ) deallocate(ens_handle%inner_inc  )
+if(allocated(ens_handle%scalar_norm)) deallocate(ens_handle%scalar_norm)
+if(allocated(ens_handle%vector_norm)) deallocate(ens_handle%vector_norm)
 
+! variables only in state_handle:
+if(allocated(ens_handle%state_inc)  ) deallocate(ens_handle%state_inc  )
+if(allocated(ens_handle%state_prior)) deallocate(ens_handle%state_prior)
 end subroutine end_ensemble_manager
 
 !-----------------------------------------------------------------

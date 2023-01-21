@@ -29,7 +29,7 @@
 
 &filter_nml
    single_file_in               = .true.,
-   input_state_files            = 'state_output/filter_post_14_64800.nc'
+   input_state_files            = 'state_output/filter_post_0_21600.nc'
    input_state_file_list        = ''
 
    stages_to_write  = 'null'
@@ -53,11 +53,11 @@
    async                        = 0,
    adv_ens_command              = "../shell_scripts/advance_model.csh",
 
-   obs_sequence_in_name         = "observation/obs_seq.out_14_64800",
-   obs_sequence_out_name        = "obs_space_diag/obs_seq.post_14_64800",
+   obs_sequence_in_name         = "observation/obs_seq.out_0_21600",
+   obs_sequence_out_name        = "obs_space_diag/obs_seq.post_0_21600",
    num_output_obs_members       = 25,
-   init_time_days               = 14,
-   init_time_seconds            = 64800,
+   init_time_days               = 0,
+   init_time_seconds            = 21600,
    first_obs_days               = -1,
    first_obs_seconds            = -1,
    last_obs_days                = -1,
@@ -80,9 +80,11 @@
    output_forward_op_errors     = .false.,
    silence                      = .false.,
 
-   max_iter                    = 80,
+   max_iter                    = 4,
    min_eps_adap                = 0.001,
-   eps_adap_decrease           = 0.5,
+   eps_adap_decrease           = 0.8,
+   norm_increase_tolerance     = 1.2,
+   early_stop_criterion        = 0.01,
    /
 
 &quality_control_nml
@@ -113,9 +115,6 @@
    localization_diagnostics_file   = 'localization_diagnostics',
    print_every_nth_obs             = 0
 
-   norm_increase_tolerance = 1.2,
-   early_stop_criterion    = 0.1,
-   
    min_kernel_value        = 0.1,
    eps_type                = 0.02,
    min_eig_ratio           = 1e-10,

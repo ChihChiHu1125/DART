@@ -259,9 +259,9 @@ real(r8) :: inf_sd_lower_bound(2)          = 0.0_r8
 ! CLM should have allow_missing_clm = .true.
 logical  :: allow_missing_clm = .false.
 
-! CCWU: FOR PFF:
+! CCHU: namelist for PFF-DART:
 integer  :: max_iter
-real(r8) :: eps_adap_decrease, min_eps_adap
+real(r8) :: eps_adap_decrease, min_eps_adap, norm_increase_tolerance, early_stop_criterion
 
 
 namelist /filter_nml/ async,     &
@@ -316,7 +316,9 @@ namelist /filter_nml/ async,     &
    allow_missing_clm,            &
    max_iter,                     &
    min_eps_adap,                 &
-   eps_adap_decrease
+   eps_adap_decrease,            &
+   norm_increase_tolerance,      &
+   early_stop_criterion
 
 !----------------------------------------------------------------
 
@@ -368,28 +370,15 @@ logical :: ds, all_gone, allow_missing
 ! real(r8), allocatable   :: temp_ens(:) ! for smoother
 real(r8), allocatable   :: prior_qc_copy(:)
 
-! CCWU:
+! CCHU:
 integer :: iter ! the iteration for PFF
-!integer, parameter :: max_iter=100
-integer :: n_my_state, n_my_obs, n_my_ens, n_inner
+integer :: n_my_state, n_my_obs, n_my_ens, max_ni
 integer :: jj, nobs, Ni
 character :: output_name*50
-real(r8), allocatable :: inner_prior(:,:,:)
-real(r8), allocatable :: state_prior(:,:), hx_prior(:,:)
-real(r8), allocatable :: state_prev_iter(:,:)
-real(r8), allocatable :: state_inc(:,:)
-real(r8), allocatable :: output(:) 
-real(r8), allocatable :: pff_norm_total(:,:)
+real(r8), allocatable :: state_prev_iter(:,:), state_inc(:,:) ! should be ens_size*my_num_var
 real(r8), allocatable :: eps_adap(:)
-!real(r8) :: eps_adap_decrease, min_eps_adap
-logical :: pff_update, early_stop
-
-! adaptive kernel width
-real(r8), allocatable :: initial_ker_alpha(:)
-real(r8), allocatable :: inner_c(:)
-
-integer :: total_eps_decrease
-integer, allocatable :: early_stop_each_obs(:)
+logical  :: pff_update, early_stop
+real(r8):: initial_ker_alpha ! adaptive kernel width
 
 call filter_initialize_modules_used() ! static_init_model called in here
 
@@ -718,6 +707,16 @@ if (get_stage_to_write('input')) then
 
 endif
 
+! CCHU (2022/01/20)
+! sequential DA algorithm for PFF-DART:
+! allocate stuff for every pe:
+max_ni=50 ! CAUTION ::  max_ni should be larger than Ni and be consistent with inner_domain_mod
+
+allocate(eps_adap(max_iter))
+allocate(state_prev_iter(ens_size, state_ens_handle%my_num_vars))
+
+allocate(state_ens_handle%state_inc   (ens_size,state_ens_handle%my_num_vars))
+allocate(state_ens_handle%state_prior (ens_size,state_ens_handle%my_num_vars))
 
 AdvanceTime : do
    call trace_message('Top of main advance time loop')
@@ -897,12 +896,10 @@ AdvanceTime : do
    ! allocate() space for the prior qc copy
    call allocate_single_copy(obs_fwd_op_ens_handle, prior_qc_copy)
 
-! CCWU
-   allocate(eps_adap(max_iter))
-   allocate(early_stop_each_obs(obs_fwd_op_ens_handle%num_vars))
 
-   early_stop_each_obs = 0
+! CCHU (start of the main PFF-DART below):
 
+if (async==1) then ! to save time, only do below when actually doing DA
    ! The start of PFF iteration
    iter = 1
 
@@ -915,35 +912,24 @@ AdvanceTime : do
    !   !write(*,*) state_ens_handle%my_vars
    !endif
 
-   eps_adap = 1 ! initial value for learning rate
-   !min_eps_adap = 0.1 ! when eps_adap lower than this value, exit the while-loop
+   ! Adaptive learning rate: initialization
+   eps_adap(:) = 1 ! initial value for learning rate
 
-   allocate(pff_norm_total(obs_fwd_op_ens_handle%num_vars,max_iter))
-   pff_norm_total = 0
+   allocate(obs_fwd_op_ens_handle%vector_norm (max_ni, max_iter))
+   allocate(obs_fwd_op_ens_handle%scalar_norm (max_iter)        )
+
+   !min_eps_adap = 0.1 ! when eps_adap lower than this value, exit the while-loop
+   ! to get into the loop:
    pff_update=.true.
    early_stop=.false.
 
-   allocate(initial_ker_alpha(obs_fwd_op_ens_handle%num_vars))
+   ! Adaptive kernel width: initialization
    initial_ker_alpha = 1.0_r8
-
-   !print*, 'max_iter =',max_iter
-   !print*, '(iter.le.max_iter) = ',(iter.le.max_iter)
-   !print*, '(eps_adap(iter).ge.min_eps_adap*1.0_r8) =', (eps_adap(iter).ge.min_eps_adap*1.0_r8)
-   !print*, 'eps_adap(iter) = ', eps_adap(iter)
-   !print*, 'min_eps_adap*1.0_r8 = ', min_eps_adap*1.0_r8
-   !print*, '(.not.early_stop) = ',(.not.early_stop)
-   
-   allocate(obs_fwd_op_ens_handle%norm_pff_obs(obs_fwd_op_ens_handle%my_num_vars,max_iter))
-   allocate(obs_fwd_op_ens_handle%eps_pff_obs (obs_fwd_op_ens_handle%my_num_vars,max_iter))
-
-   obs_fwd_op_ens_handle%eps_pff_obs=1.0_r8 ! initialize
 
 do while ((iter.le.max_iter).AND.(eps_adap(iter).ge.min_eps_adap*1.0_r8).AND.(.not.early_stop))
 
-   !print*, 'I am in!'
-   !print*, eps_adap
    !if (my_task_id().eq.0) then
-!      write(*,*) 'PFF iteration ', iter
+   !   write(*,*) 'PFF iteration ', iter
    !   write(12, rec=iter) state_ens_handle%copies(1:ens_size,1:n_my_state)
    !endif
 
@@ -956,30 +942,30 @@ do while ((iter.le.max_iter).AND.(eps_adap(iter).ge.min_eps_adap*1.0_r8).AND.(.n
    ! Check on the inner domain info
    call output_inner_domain_info(50 + my_task_id())
 
-   if ((iter.eq.1).and.(pff_update)) then ! save prior information
+   if ( iter.eq.1 ) then ! save prior information
 
       n_my_obs = obs_fwd_op_ens_handle%my_num_vars
-      n_inner  = 50 ! this should be consistent with (1) max_ni in assim_tools_mod.f90
-                    !                                (2) max_num_vars in inner_domain.f90
+      !print*, '  pe = ', my_task_id(),'#obs = ', n_my_obs
 
-      state_prior = state_ens_handle%copies(1:ens_size,:) ! state_prior: prior of all the states in this pe
-      hx_prior    = obs_fwd_op_ens_handle%copies(1:ens_size,:) ! h(x) prior
+      ! save the info for prior x for all PE:
+      state_ens_handle%state_prior   = state_ens_handle%copies(1:ens_size,:)
 
-      allocate(inner_prior(ens_size, n_inner, n_my_obs))
-      allocate(output(n_inner))
+      ! save the prior info for the inner domain 
+      ! note this is ONLY for the owner of the obs (which should be the 1st pe):
+      Ni = get_num_vars_inner_domain(1) ! get # of inner domain variables
 
-      ! write(*,*) '# obs = ', n_my_obs, '# ens =', n_my_ens 
+      if ((n_my_obs.gt.0).and.(Ni.gt.0)) then ! only do for the pe who owns the obs
+         allocate(obs_fwd_op_ens_handle%hx_prior    (ens_size)               )
+         allocate(obs_fwd_op_ens_handle%inner_prior (ens_size, Ni)           )
+         allocate(obs_fwd_op_ens_handle%inner_inc   (ens_size, Ni, max_iter) )
 
-      ! In the following, save the prior info for the inner domain:
-      DO nobs =1, n_my_obs
-         Ni = get_num_vars_inner_domain(nobs) ! get # of inner domain variables
-                                              ! for the nobs-th observation
+         obs_fwd_op_ens_handle%hx_prior = obs_fwd_op_ens_handle%copies(1:ens_size,1)
 
          do jj = 1, Ni
-            call get_var_ens_inner_domain(nobs, jj, output)
-            inner_prior(:, jj, nobs) = output ! inner_prior: prior of inner domain
+            call get_var_ens_inner_domain(1, jj, obs_fwd_op_ens_handle%inner_prior(:,jj))
          enddo
-      END DO
+      endif
+
 
       call timestamp_message('After  computing prior observation values')
       call     trace_message('After  computing prior observation values')
@@ -1029,62 +1015,18 @@ do while ((iter.le.max_iter).AND.(eps_adap(iter).ge.min_eps_adap*1.0_r8).AND.(.n
 
    endif ! endif iter==1
 
-
-   ! CCWU: prior filter_assim
-   ! state_prev_iter = state_ens_handle%copies(1:ens_size,:) ! the state of the previous iteration
-
-   call filter_assim(state_ens_handle, obs_fwd_op_ens_handle, seq, keys, &
-      ens_size, num_groups, obs_val_index, prior_inflate, &
-      ENS_MEAN_COPY, ENS_SD_COPY, &
+   call filter_assim(state_ens_handle, obs_fwd_op_ens_handle, seq, keys,   &
+      ens_size, num_groups, obs_val_index, prior_inflate,                  &
+      ENS_MEAN_COPY, ENS_SD_COPY,                                          &
       PRIOR_INF_COPY, PRIOR_INF_SD_COPY, OBS_KEY_COPY, OBS_GLOBAL_QC_COPY, &
-      OBS_MEAN_START, OBS_MEAN_END, OBS_VAR_START, &
-      OBS_VAR_END, inflate_only = .false., iter=iter, &
-      pinner=inner_prior,pstate=state_prior, pobs=hx_prior, &
-      state_inc=state_inc, pff_norm_total=pff_norm_total,&
-      pff_update=pff_update, eps_adap=eps_adap, early_stop=early_stop, &
-      initial_ker_alpha=initial_ker_alpha,max_iter=max_iter, &
-      total_eps_decrease=total_eps_decrease, early_stop_each_obs=early_stop_each_obs)
-
-   if (my_task_id()==0 .and. total_eps_decrease .gt.0 ) then
-      print*,'iter ', iter,'total_eps_decrease', total_eps_decrease
-   endif
-
-   if (total_eps_decrease > 0) then
-      obs_fwd_op_ens_handle%eps_pff_obs(:,iter+1:max_iter) = &
-      obs_fwd_op_ens_handle%eps_pff_obs(:,iter+1:max_iter)*0.9
-   endif
-
-   !if (my_task_id()==0) print*, 'PE0:',obs_fwd_op_ens_handle%norm_pff_obs(1,max(iter-1,1):iter)
-   !if (my_task_id()==1) print*, 'PE1:',obs_fwd_op_ens_handle%norm_pff_obs(1,max(iter-1,1):iter)
-
+      OBS_MEAN_START, OBS_MEAN_END, OBS_VAR_START,                         &
+      OBS_VAR_END, inflate_only = .false.,                                 &
+      iter=iter, max_iter=max_iter,                                        &
+      initial_ker_alpha=initial_ker_alpha )                                
 
    !if ((my_task_id().eq.0).and.(iter.eq.1)) then
    !   print*, 'initial_ker_alpha = ', initial_ker_alpha
    !endif
-
-   ! CCWU: for output diagnostics (save inner domain info)
-   !if (pff_update.and.my_task_id()==0) then
-   !   ! save obs space first
-   !   write(12, rec=(iter-1)*10+1) obs_fwd_op_ens_handle%copies(1:ens_size,1)
-   !   write(12, rec=(iter-1)*10+2) obs_fwd_op_ens_handle%copies(1:ens_size,2)
-   !
-   !
-   !   allocate(inner_c(ens_size))
-   !   do jj=1,4
-   !      call get_var_ens_inner_domain(1, jj, inner_c)
-   !      write(12, rec=(iter-1)*10+jj+2) inner_c
-   !   enddo
-   !
-   !   do jj=1,4
-   !      call get_var_ens_inner_domain(2, jj, inner_c)
-   !      write(12, rec=(iter-1)*10+jj+6) inner_c
-   !   enddo
-   !
-   !   deallocate(inner_c)
-   !
-   !endif
-
-
 
    ! PFF clear info in the inner domain
    call clear_inner_domain
@@ -1096,43 +1038,77 @@ do while ((iter.le.max_iter).AND.(eps_adap(iter).ge.min_eps_adap*1.0_r8).AND.(.n
    ! adding state_inc); if pff_update=false, then go back to previous iteration
    ! with smaller eps_adap
 
-   !eps_adap_decrease = 0.9 ! dercrease rate for eps_adap; used if pff_update == false
+   ! Determine if pff_update / early_stop  = .true. or .false. based on obs_handle% scalar_norm
+   ! Note that every pe has the norm info
 
-   ! 2022/06/03 test code:
-   !pff_update = .true. ! temp test
+   if ( my_task_id().eq.0 ) then
+      write(*,100) 'PFF norm inc is =', &
+                      obs_fwd_op_ens_handle%scalar_norm(iter)/obs_fwd_op_ens_handle%scalar_norm(1)*100,'%'
+      100 format (A21,F6.2,A2)
+   endif      
+
+   if ( iter.eq.1 ) then ! 1st iteration always update
+      pff_update = .true. 
+      early_stop = .false.
+   else
+      if ( obs_fwd_op_ens_handle%scalar_norm(iter) .ge. &
+            norm_increase_tolerance*obs_fwd_op_ens_handle%scalar_norm(iter-1) ) then
+         pff_update = .false.
+         early_stop = .false.
+
+      elseif ( obs_fwd_op_ens_handle%scalar_norm(iter) .le. & 
+                early_stop_criterion*obs_fwd_op_ens_handle%scalar_norm(1) ) then
+         pff_update = .true.
+         early_stop = .true.
+      else
+         pff_update = .true.
+         early_stop = .false.
+      endif
+   endif
+   
+   ! The actual update loop:
    if (pff_update) then
       if (my_task_id().eq.0) then
-         write(*,100) 'PE 0: filter: finish iteration ',iter,' , adaptive learning rate = ',eps_adap(iter)
-         100 format (A31,I3,A26,F6.4)
+         write(*,101) 'finish iteration ',iter,' , adaptive learning rate = ',eps_adap(iter)
+         101 format (A21,I3,A26,F6.4)
       endif
       state_prev_iter = state_ens_handle%copies(1:ens_size,:) ! state of previous iteration
-      state_ens_handle%copies(1:ens_size,:) = state_prev_iter + state_inc
+      state_ens_handle%copies(1:ens_size,:) = state_prev_iter + eps_adap(iter)*state_ens_handle%state_inc
       iter = iter + 1
    else
-      state_ens_handle%copies(1:ens_size,:) = state_prev_iter ! redo the previous iteration
-      iter = iter - 1
-      eps_adap(iter:max_iter) = eps_adap(iter)*eps_adap_decrease ! make adaptive learning rate smaller
+      ! re-update the previous iteration with smaller eps
+      ! x(i) = x(i-1) + decrease_rate*(x(i)-x(i-1)) 
+      ! the decrease rate (eps_adap_decrease) is controlled by the namelist input.nml
+      state_ens_handle%copies(1:ens_size,:) = state_prev_iter + &
+                               eps_adap_decrease*( state_ens_handle%copies(1:ens_size,:) - state_prev_iter )
+
+      ! make the following learning rate smaller:
+      eps_adap(iter-1:max_iter) = eps_adap(iter-1)*eps_adap_decrease
+
       if (my_task_id().eq.0) then
-         write(*,101) 'PE 0: filter:   !!! learning rate too large, try smaller learning rate ',eps_adap(iter)
-         101 format (A71, F6.4)
+         write(*,102) '!!! learning rate too large, try smaller learning rate ',eps_adap(iter)
+         102 format (A63, F6.4)
       endif
+
    endif
 
    if ((early_stop).and.(my_task_id().eq.0)) then
-      write(*,*) 'PE 0: filter: reach early stopping criterion.'
+      write(*,*) '        reach early stopping criterion.'
    endif
 
    call task_sync() ! synchronize all the pe at this point
 
 END DO ! PFF iteration
 
+   if (my_task_id()==0) print*, '        finish PFF iteration. Total iteration = ', iter-1
 
-   deallocate(inner_prior)
-   deallocate(output)
-   deallocate(pff_norm_total)
-   deallocate(initial_ker_alpha)
-   deallocate(eps_adap)
-   deallocate(early_stop_each_obs)
+   !if (allocated(eps_adap))        deallocate(eps_adap)
+   !if (allocated(state_prev_iter)) deallocate(state_prev_iter)
+
+   !if (allocated(state_ens_handle%state_inc)       ) deallocate(state_ens_handle%state_inc)
+   !if (allocated(state_ens_handle%state_prior)     ) deallocate(state_ens_handle%state_prior)
+
+endif ! if async == 1
 
 
    call timestamp_message('After  observation assimilation')
@@ -1351,6 +1327,10 @@ END DO ! PFF iteration
    call trace_message('Bottom of main advance time loop')
 
 end do AdvanceTime
+
+! CCHU: deallocate stuff:
+if (allocated(eps_adap))        deallocate(eps_adap)
+if (allocated(state_prev_iter)) deallocate(state_prev_iter)
 
 call trace_message('End of main filter assimilation loop, starting cleanup', 'filter:', -1)
 
