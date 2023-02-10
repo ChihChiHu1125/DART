@@ -29,15 +29,15 @@
 
 &filter_nml
    single_file_in               = .true.,
-   input_state_files            = ''
-   input_state_file_list        = 'filter_input_list.txt'
+   input_state_files            = 'state_output/filter_post_4_64800.nc'
+   input_state_file_list        = ''
 
-   stages_to_write  = 'preassim', 'analysis', 'output'
+   stages_to_write  = 'null'
 
    single_file_out              = .true.,
-   output_state_files           = ''
-   output_state_file_list       = 'filter_output_list.txt'
-   output_interval              = 1,
+   output_state_files           = 'state_output/useless.nc'
+   output_state_file_list       = ''
+   output_interval              = 10000,
    output_members               = .true.
    num_output_state_members     = 20,
    output_mean                  = .true.
@@ -52,11 +52,11 @@
    async                        = 0,
    adv_ens_command              = "./advance_model.csh",
 
-   obs_sequence_in_name         = "obs_seq.out",
-   obs_sequence_out_name        = "obs_seq.final",
+   obs_sequence_in_name         = "observation/obs_seq.out_4_64800",
+   obs_sequence_out_name        = "obs_space_diag/obs_seq.post_4_64800",
    num_output_obs_members       = 20,
-   init_time_days               = 0,
-   init_time_seconds            = 0,
+   init_time_days               = 4,
+   init_time_seconds            = 64800,
    first_obs_days               = -1,
    first_obs_seconds            = -1,
    last_obs_days                = -1,
@@ -79,6 +79,12 @@
    output_forward_op_errors     = .false.,
    write_obs_every_cycle        = .false.,
    silence                      = .false.,
+
+   max_iter                    = 80,
+   min_eps_adap                = 0.01,
+   eps_adap_decrease           = 0.8,
+   norm_increase_tolerance     = 1.05,
+   early_stop_criterion        = 0.00001,
    /
 
 &smoother_nml
@@ -107,6 +113,10 @@
    print_every_nth_obs             = 0,
    rectangular_quadrature          = .true.,
    gaussian_likelihood_tails       = .false.,
+
+   min_kernel_value        = 0.1,
+   eps_type                = 0.1,
+   min_eig_ratio           = 1e-10,
    /
 
 &cov_cutoff_nml
@@ -126,7 +136,7 @@
    /
 
 &obs_kind_nml
-   assimilate_these_obs_types = 'RAW_STATE_VARIABLE',
+   evaluate_these_obs_types = 'RAW_STATE_VARIABLE',
                                 'RAW_STATE_1D_INTEGRAL',
                                 'RAW_STATE_VAR_POWER'
    /
@@ -136,7 +146,7 @@
    forcing           = 8.00,
    delta_t           = 0.05,
    time_step_days    = 0,
-   time_step_seconds = 3600,
+   time_step_seconds = 10,
    /
 
 &utilities_nml

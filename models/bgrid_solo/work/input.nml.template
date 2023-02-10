@@ -80,10 +80,10 @@
    output_forward_op_errors     = .false.,
    silence                      = .false.,
 
-   max_iter                    = 4,
-   min_eps_adap                = 0.001,
+   max_iter                    = 60,
+   min_eps_adap                = 0.01,
    eps_adap_decrease           = 0.8,
-   norm_increase_tolerance     = 1.2,
+   norm_increase_tolerance     = 1.05,
    early_stop_criterion        = 0.01,
    /
 
@@ -106,7 +106,7 @@
 
 &assim_tools_nml
    filter_kind                     = 1,
-   cutoff                          = 0.15,
+   cutoff                          = 0.16,
    sort_obs_inc                    = .false.,
    spread_restoration              = .false.,
    sampling_error_correction       = .false.,
@@ -116,7 +116,7 @@
    print_every_nth_obs             = 0
 
    min_kernel_value        = 0.1,
-   eps_type                = 0.02,
+   eps_type                = 0.25,
    min_eig_ratio           = 1e-10,
    /
 

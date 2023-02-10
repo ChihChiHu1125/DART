@@ -4,7 +4,7 @@
 # Chih-Chi Hu 2022/12/30
 
 export obs_freq=21600 # obs frequency in seconds (check the folder ./observation for info there)
-export n_da_cycle=2   # how many DA cycles to run (note: 1st DA cycle starts from 0 day 0 sec)
+export n_da_cycle=60   # how many DA cycles to run (note: 1st DA cycle starts from 0 day 0 sec)
 
 export current_dir="/home/chihchi/scratch/Bgrid_project_NEW/DART_EAKF/models/lorenz_96/work"
 export obs_files="observation"
@@ -169,4 +169,5 @@ EOF
 
 done
 
+echo " === !!! All cycling experiments done !!! === "
 

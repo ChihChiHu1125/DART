@@ -380,6 +380,9 @@ real(r8), allocatable :: eps_adap(:)
 logical  :: pff_update, early_stop
 real(r8):: initial_ker_alpha ! adaptive kernel width
 
+real(r8) :: total_inner_domain_inc(4)
+real(r8) :: inner_tmp_for_save(25,4)
+
 call filter_initialize_modules_used() ! static_init_model called in here
 
 ! Read the namelist entry
@@ -905,11 +908,11 @@ if (async==1) then ! to save time, only do below when actually doing DA
 
    ! Save the state during all iterations:
    !if (my_task_id().eq.0) then   
-   !   output_name='./output/PFF_obs_inner_evo.dat'
-   !!   n_my_state=state_ens_handle%my_num_vars
-   !   n_my_state = 1
+   !   output_name='./output_temp/PFF_obs_inner_evo.dat'
+   !   n_my_state=state_ens_handle%my_num_vars
+   !   n_my_state = 4
    !   open(12,file=output_name,status='unknown',form='unformatted',access='direct',recl=8*n_my_state*ens_size)
-   !   !write(*,*) state_ens_handle%my_vars
+      !write(*,*) state_ens_handle%my_vars
    !endif
 
    ! Adaptive learning rate: initialization
@@ -1015,6 +1018,16 @@ do while ((iter.le.max_iter).AND.(eps_adap(iter).ge.min_eps_adap*1.0_r8).AND.(.n
 
    endif ! endif iter==1
 
+   ! save inner domain info for each iteration
+   !Ni = get_num_vars_inner_domain(1)
+
+   !do jj = 1, Ni
+   !   call get_var_ens_inner_domain(1, jj, inner_tmp_for_save(:,jj))
+   !enddo
+
+   !write(12, rec=iter) inner_tmp_for_save
+
+
    call filter_assim(state_ens_handle, obs_fwd_op_ens_handle, seq, keys,   &
       ens_size, num_groups, obs_val_index, prior_inflate,                  &
       ENS_MEAN_COPY, ENS_SD_COPY,                                          &
@@ -1101,6 +1114,16 @@ do while ((iter.le.max_iter).AND.(eps_adap(iter).ge.min_eps_adap*1.0_r8).AND.(.n
 END DO ! PFF iteration
 
    if (my_task_id()==0) print*, '        finish PFF iteration. Total iteration = ', iter-1
+
+
+if(my_task_id()==0) then
+   total_inner_domain_inc = sum(sum(obs_fwd_op_ens_handle%inner_inc(:,:,1:iter-1),dim=3),dim=1)/ens_size 
+   print*, ' === '
+   print*, 'total inner domain inc =', total_inner_domain_inc(1:Ni)
+   print*, ' --- '
+endif
+
+   !write(12, rec=iter) sum(obs_fwd_op_ens_handle%inner_inc(:,:,1:iter-1),dim=3)
 
    !if (allocated(eps_adap))        deallocate(eps_adap)
    !if (allocated(state_prev_iter)) deallocate(state_prev_iter)
