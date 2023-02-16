@@ -1116,12 +1116,15 @@ END DO ! PFF iteration
    if (my_task_id()==0) print*, '        finish PFF iteration. Total iteration = ', iter-1
 
 
-if(my_task_id()==0) then
-   total_inner_domain_inc = sum(sum(obs_fwd_op_ens_handle%inner_inc(:,:,1:iter-1),dim=3),dim=1)/ens_size 
-   print*, ' === '
-   print*, 'total inner domain inc =', total_inner_domain_inc(1:Ni)
-   print*, ' --- '
-endif
+print*,'dx=', sum(state_ens_handle%copies(1:ens_size,:),dim=1)/(ens_size*1.0_r8)- &
+              sum(state_ens_handle%state_prior(1:ens_size,:),dim=1)/(ens_size*1.0_r8)
+
+!if(my_task_id()==0) then
+!   total_inner_domain_inc = sum(sum(obs_fwd_op_ens_handle%inner_inc(:,:,1:iter-1),dim=3),dim=1)/ens_size 
+!   print*, ' === '
+!   print*, 'total inner domain inc =', total_inner_domain_inc(1:Ni)
+!   print*, ' --- '
+!endif
 
    !write(12, rec=iter) sum(obs_fwd_op_ens_handle%inner_inc(:,:,1:iter-1),dim=3)
 
