@@ -1014,9 +1014,9 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
 
          ! Compute the covariance localization and adjust_obs_impact factors
          ! (module storage)
-         !final_factor = cov_and_impact_factors(base_obs_loc, base_obs_type, my_state_loc(state_index), &
-         !   my_state_kind(state_index), close_state_dist(j), cutoff_rev)
-         final_factor = 1.0_r8
+         final_factor = cov_and_impact_factors(base_obs_loc, base_obs_type, my_state_loc(state_index), &
+            my_state_kind(state_index), close_state_dist(j), cutoff_rev)
+         !final_factor = 1.0_r8
 
 
          !if (my_task_id()==0) then
