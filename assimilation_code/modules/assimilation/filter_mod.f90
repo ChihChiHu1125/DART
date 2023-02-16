@@ -93,7 +93,8 @@ use forward_operator_mod,  only : get_obs_ens_distrib_state
 use quality_control_mod,   only : initialize_qc
 
 use inner_domain_mod,      only : clear_inner_domain, get_num_vars_inner_domain,  &
-                                  output_inner_domain_info, get_var_ens_inner_domain
+                                  output_inner_domain_info, get_var_ens_inner_domain, &
+                                  get_var_index_inner_domain
 
 !------------------------------------------------------------------------------
 
@@ -382,6 +383,8 @@ real(r8):: initial_ker_alpha ! adaptive kernel width
 
 real(r8) :: total_inner_domain_inc(4)
 real(r8) :: inner_tmp_for_save(25,4)
+integer(i8) :: inner_index(50)
+
 
 call filter_initialize_modules_used() ! static_init_model called in here
 
@@ -956,6 +959,11 @@ do while ((iter.le.max_iter).AND.(eps_adap(iter).ge.min_eps_adap*1.0_r8).AND.(.n
       ! save the prior info for the inner domain 
       ! note this is ONLY for the owner of the obs (which should be the 1st pe):
       Ni = get_num_vars_inner_domain(1) ! get # of inner domain variables
+      
+      ! CCHU 2023/02/14: also inquire inner index:
+      inner_index = 0
+      call get_var_index_inner_domain(1, inner_index(1:Ni), Ni)
+      print*, inner_index(1:Ni)
 
       if ((n_my_obs.gt.0).and.(Ni.gt.0)) then ! only do for the pe who owns the obs
          allocate(obs_fwd_op_ens_handle%hx_prior    (ens_size)               )
@@ -1035,7 +1043,7 @@ do while ((iter.le.max_iter).AND.(eps_adap(iter).ge.min_eps_adap*1.0_r8).AND.(.n
       OBS_MEAN_START, OBS_MEAN_END, OBS_VAR_START,                         &
       OBS_VAR_END, inflate_only = .false.,                                 &
       iter=iter, max_iter=max_iter,                                        &
-      initial_ker_alpha=initial_ker_alpha )                                
+      initial_ker_alpha=initial_ker_alpha, outer_update=.false. )                                
 
    !if ((my_task_id().eq.0).and.(iter.eq.1)) then
    !   print*, 'initial_ker_alpha = ', initial_ker_alpha
@@ -1113,15 +1121,62 @@ do while ((iter.le.max_iter).AND.(eps_adap(iter).ge.min_eps_adap*1.0_r8).AND.(.n
 
 END DO ! PFF iteration
 
-   if (my_task_id()==0) print*, '        finish PFF iteration. Total iteration = ', iter-1
+if (my_task_id()==0) print*, '        finish PFF iteration. Total iteration =', iter-1
 
 
-if(my_task_id()==0) then
-   total_inner_domain_inc = sum(sum(obs_fwd_op_ens_handle%inner_inc(:,:,1:iter-1),dim=3),dim=1)/ens_size 
-   print*, ' === '
-   print*, 'total inner domain inc =', total_inner_domain_inc(1:Ni)
-   print*, ' --- '
-endif
+! print all dx:
+print*,'before update of the outer domain:'
+print*,'dx =',sum(state_ens_handle%copies(1:ens_size,:),dim=1)/(ens_size*1.0_r8)- &
+              sum(state_ens_handle%state_prior(1:ens_size,:),dim=1)/(ens_size*1.0_r8)
+
+
+! CCHU: 2023/02/16
+! final step: update the outer domain:
+! update_outer = .true.
+
+   call get_obs_ens_distrib_state(state_ens_handle, obs_fwd_op_ens_handle, &
+           qc_ens_handle, seq, keys, obs_val_index, input_qc_index, &
+           OBS_ERR_VAR_COPY, OBS_VAL_COPY, OBS_KEY_COPY, OBS_GLOBAL_QC_COPY, &
+           OBS_EXTRA_QC_COPY, OBS_MEAN_START, OBS_VAR_START, &
+           isprior=.true., prior_qc_copy=prior_qc_copy)
+
+   ! Check on the inner domain info
+   call output_inner_domain_info(50 + my_task_id())
+
+   call filter_assim(state_ens_handle, obs_fwd_op_ens_handle, seq, keys,   &
+      ens_size, num_groups, obs_val_index, prior_inflate,                  &
+      ENS_MEAN_COPY, ENS_SD_COPY,                                          &
+      PRIOR_INF_COPY, PRIOR_INF_SD_COPY, OBS_KEY_COPY, OBS_GLOBAL_QC_COPY, &
+      OBS_MEAN_START, OBS_MEAN_END, OBS_VAR_START,                         &
+      OBS_VAR_END, inflate_only = .false.,                                 &
+      iter=iter, max_iter=max_iter,                                        &
+      initial_ker_alpha=initial_ker_alpha, outer_update=.true. )
+
+   call clear_inner_domain
+
+   ! update the whole state:
+   state_ens_handle%copies(1:ens_size,:) = state_ens_handle%state_prior(1:ens_size,:) &
+                                         + state_ens_handle%state_inc
+
+
+! print inner domain update:
+!print*,'dx =', sum(state_ens_handle%copies(1:ens_size,inner_index(1:Ni)),dim=1)/(ens_size*1.0_r8) - &
+!               sum(state_ens_handle%state_prior(1:ens_size,inner_index(1:Ni)),dim=1)/(ens_size*1.0_r8)
+
+! print all dx:
+print*,'after updates of the outer domain:'
+print*,'dx =',sum(state_ens_handle%copies(1:ens_size,:),dim=1)/(ens_size*1.0_r8)- &
+              sum(state_ens_handle%state_prior(1:ens_size,:),dim=1)/(ens_size*1.0_r8)
+
+!if(my_task_id()==0) then
+!   total_inner_domain_inc = sum(sum(obs_fwd_op_ens_handle%inner_inc(:,:,1:iter-1),dim=3),dim=1)/ens_size 
+!   print*, ' === '
+!   print*, 'total inner domain inc =', total_inner_domain_inc(1:Ni)
+!   print*, ' --- '
+!endif
+
+
+
 
    !write(12, rec=iter) sum(obs_fwd_op_ens_handle%inner_inc(:,:,1:iter-1),dim=3)
 

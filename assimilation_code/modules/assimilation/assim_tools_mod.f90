@@ -317,7 +317,7 @@ subroutine filter_assim(ens_handle, obs_ens_handle, obs_seq, keys,           &
    OBS_PRIOR_MEAN_START, OBS_PRIOR_MEAN_END, OBS_PRIOR_VAR_START,            &
    OBS_PRIOR_VAR_END, inflate_only,                                          &
    iter, max_iter, &
-   initial_ker_alpha)
+   initial_ker_alpha, outer_update)
 
 type(ensemble_type),         intent(inout) :: ens_handle, obs_ens_handle
 type(obs_sequence_type),     intent(in)    :: obs_seq
@@ -388,7 +388,7 @@ logical :: local_obs_inflate
 ! CCHU for PFF-DART new arguments:
 integer,  intent(in),    optional :: iter, max_iter     ! the PFF iteration
 real(r8), intent(inout), optional :: initial_ker_alpha  ! for adpative kernel width
-!real(r8), allocatable, intent(out), optional :: state_inc(:,:) ! the big state increment
+logical,  intent(in),    optional :: outer_update       ! if true, update the outer domain
 
 ! variables for broadcast send/recv: 
 integer(i8) :: inner_index(max_ni)
@@ -407,19 +407,21 @@ real(r8) :: Ni_r8 ! the real(Ni)
 real(r8) :: one_inner_to_state_inc(ens_size)
 ! output from obs_increment_pff
 real(r8), allocatable :: inner_increment(:,:)      ! inner domain increment
-real(r8), allocatable :: Binv_inner_increment(:,:) ! Binv*inner domain increment
+real(r8), allocatable :: Binv_inner_increment(:,:) ! Binv* inner domain increment
 real(r8), allocatable :: norm_inner_increment(:)   ! norm for increment
+real(r8), allocatable :: inner_p_mean(:)           ! inner domain prior mean
+real(r8), allocatable :: prior_cov(:,:), prior_cov_inv(:,:), input_inverse(:,:)
 real(r8)              :: initial_alpha             ! temporary storage for initial alpha
 
 ! for adapative learning rate
 real(r8) :: scalar_norm_tmp
 
 ! dummy vars:
-integer :: jj, inner,cc
+integer :: ii, jj, inner,cc, ss
 integer :: n_total_obs ! total number of global obs
 character :: output_name*50
 real(r8) :: ccwu, ccwu_tmp, ccwu_add
-integer  :: cwui
+integer  :: cwui, cchu
 integer :: ccwu1_ct, ccwu2_ct, n_my_state
 real(r8), dimension(3) :: ccwu_array
 
@@ -807,54 +809,71 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
    ! once every pe knows Ni "of this obs" (each obs has different Ni),
    !  allocate the dimension of inner domain increment:
    allocate(inner_increment     (ens_size, Ni) )
-   allocate(Binv_inner_increment(ens_size, Ni) )   
    allocate(norm_inner_increment(Ni)           )
 
-   ! Compute observation space increments for each group
-   do group = 1, num_groups
-      grp_bot = grp_beg(group); grp_top = grp_end(group)
+   if (.not. outer_update) then
 
-   ! CCHU:: call the filter (PFF) here:
+      ! Compute observation space increments for each group
+      do group = 1, num_groups
+         grp_bot = grp_beg(group); grp_top = grp_end(group)
 
-      ! initial value of kernel alpha (a random number, doesn't matter)
-      initial_alpha = initial_ker_alpha
+         ! CCHU:: call the filter (PFF) here:
+
+         ! initial value of kernel alpha (a random number, doesn't matter)
+         initial_alpha = initial_ker_alpha
  
-      call obs_increment(hx_c(grp_bot:grp_top), grp_size,                              &
-           obs(1), obs_err_var, obs_inc(grp_bot:grp_top), inflate, my_inflate,         &
-           my_inflate_sd, net_a(group),                                                &
-           iter=iter, max_iter=max_iter, initial_alpha=initial_alpha,                  &
-           Ni=Ni, inner_index=inner_index(1:Ni),                                       &
-           inner_p=inner_p(1:ens_size*Ni), inner_c=inner_c(1:ens_size*Ni), hx_p=hx_p,  & 
-           Binv_inner_increment=Binv_inner_increment, inner_increment=inner_increment, &
-           norm_inner_increment=norm_inner_increment, &
-           base_obs_type=base_obs_type, base_obs_loc=base_obs_loc )
+         call obs_increment(hx_c(grp_bot:grp_top), grp_size,                              &
+              obs(1), obs_err_var, obs_inc(grp_bot:grp_top), inflate, my_inflate,         &
+              my_inflate_sd, net_a(group),                                                &
+              iter=iter, max_iter=max_iter, initial_alpha=initial_alpha,                  &
+              Ni=Ni, inner_index=inner_index(1:Ni),                                       &
+              inner_p=inner_p(1:ens_size*Ni), inner_c=inner_c(1:ens_size*Ni), hx_p=hx_p,  & 
+              inner_increment=inner_increment, &
+              norm_inner_increment=norm_inner_increment, &
+              base_obs_type=base_obs_type, base_obs_loc=base_obs_loc )
 
-      ! For the 1st iteration PFF, will determine an kernel alpha value
-      ! save this number and this will be used (not changed anymore) for the remaining iterations
-      if ( iter.eq.1 ) initial_ker_alpha = initial_alpha
+         ! For the 1st iteration PFF, will determine an kernel alpha value
+         ! save this number and this will be used (not changed anymore) for the remaining iterations
+         if ( iter.eq.1 ) initial_ker_alpha = initial_alpha
 
-      ! save inner_increment into the owner pe for verfication:
-      if ( ens_handle%my_pe == owner) then
-         obs_ens_handle%inner_inc(1:ens_size,1:Ni,iter) = inner_increment
-      endif    
+         ! save inner_increment into the owner pe for verfication:
+         if ( ens_handle%my_pe == owner) then
+            obs_ens_handle%inner_inc(1:ens_size,1:Ni,iter) = inner_increment
+         endif    
 
-      ! save the vector norm for all pe:
-      obs_ens_handle%vector_norm(1:Ni, iter) = norm_inner_increment
+         ! save the vector norm for all pe:
+         obs_ens_handle%vector_norm(1:Ni, iter) = norm_inner_increment
 
-      ! calculate the "scalar norm" by combining the vector norm for all pe:
-      scalar_norm_tmp = 0.0_r8
-      do jj=1,Ni
-         scalar_norm_tmp = scalar_norm_tmp + norm_inner_increment(jj)/ &
-                                             obs_ens_handle%vector_norm(jj,1)
+         ! calculate the "scalar norm" by combining the vector norm for all pe:
+         scalar_norm_tmp = 0.0_r8
+         do jj=1,Ni
+            scalar_norm_tmp = scalar_norm_tmp + norm_inner_increment(jj)/ &
+                                                obs_ens_handle%vector_norm(jj,1)
+         enddo
+         obs_ens_handle%scalar_norm(iter) = scalar_norm_tmp/Ni
+
+         ! Also compute prior mean and variance of obs for efficiency here
+         obs_prior_mean(group) = sum(hx_c(grp_bot:grp_top)) / grp_size
+         obs_prior_var(group) = sum((hx_c(grp_bot:grp_top) - obs_prior_mean(group))**2) / &
+            (grp_size - 1)
+         if (obs_prior_var(group) < 0.0_r8) obs_prior_var(group) = 0.0_r8
+      end do
+   
+      ! CCHU 2023/02/14:
+      ! update the inner domain 
+
+      do inner = 1, Ni
+         call get_var_owner_index(ens_handle, inner_index(inner), owner, owners_index)
+         if (my_task_id()==owner) then
+           !print*, 'inner (global) id  =', inner_index(inner), 'owner = pe ',owner
+           !print*, 'owner (local) index =', owners_index, '(gloabl) index =',ens_handle%my_vars(owners_index)
+            ens_handle%state_inc(1:ens_size, owners_index) = inner_increment(1:ens_size, inner)
+         endif
       enddo
-      obs_ens_handle%scalar_norm(iter) = scalar_norm_tmp/Ni
 
-      ! Also compute prior mean and variance of obs for efficiency here
-      obs_prior_mean(group) = sum(hx_c(grp_bot:grp_top)) / grp_size
-      obs_prior_var(group) = sum((hx_c(grp_bot:grp_top) - obs_prior_mean(group))**2) / &
-         (grp_size - 1)
-      if (obs_prior_var(group) < 0.0_r8) obs_prior_var(group) = 0.0_r8
-   end do
+      cycle SEQUENTIAL_OBS
+
+   endif ! if .not. outer_update
 
 
    ! Compute updated values for single state space inflation
@@ -903,6 +922,47 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
    ! Loop through to update each of my state variables that are close to obs location (current)
    ! inner domain location"s" (need to write the code for this in the future)
 
+
+   ! === Binv * inner domain increment ===
+   allocate(prior_cov           (Ni,Ni)       )
+   allocate(prior_cov_inv       (Ni,Ni)       )
+   allocate(input_inverse       (Ni,Ni)       )
+   allocate(Binv_inner_increment(ens_size, Ni)) 
+   allocate(inner_p_mean        (Ni)          ) 
+ 
+   ! calculate the prior covariance (for inner domain)
+   
+   do inner = 1, Ni
+      inner_p_mean(inner) = sum(inner_p(ens_size*(inner-1)+1: ens_size*inner))/ens_size
+   enddo
+
+   do ii=1,Ni
+      do jj=1,Ni
+         if (jj.ge.ii) then
+            prior_cov(jj,ii) =  &
+               dot_product( inner_p(ens_size*(ii-1)+1: ens_size*ii) - inner_p_mean(ii), &
+                            inner_p(ens_size*(jj-1)+1: ens_size*jj) - inner_p_mean(jj) )/(ens_size-1)
+         else
+            prior_cov(jj,ii) = prior_cov(ii,jj)
+         endif
+      enddo
+   enddo
+
+   ! calculate the inverse of prior covariance matrix:
+   input_inverse = prior_cov ! input_inverse is a dummy variable that passes prior_cov to the inverse
+
+   ! use SVD to calculate the inverse of prior covariance (of inner domain)
+   call svd_pseudo_inverse(input_inverse,prior_cov_inv,Ni,Ni,min_eig_ratio)
+ 
+   ! Binv_increment:
+   do inner = 1, Ni
+      inner_increment(:,inner) = inner_c(ens_size*(inner-1)+1: ens_size*inner) - &
+                                 inner_p(ens_size*(inner-1)+1: ens_size*inner)
+   enddo
+
+   Binv_inner_increment = matmul(inner_increment, prior_cov_inv)
+
+
    INNER_DOMAIN_INC: do inner = 1, Ni
 
       ! For PFF (the following should be the inner domain update):
@@ -910,9 +970,9 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
       ! In PFF, obs_prior = inner domain prior
       !         obs_inc   = inner domain increment
       !         and so on...
-      obs_prior = inner_p(ens_size*(inner-1)+1: ens_size*inner) ! overwrite obs_prior for PFF
-      obs_inc   = Binv_inner_increment(:, inner)                ! overwrite obs_inc for PFF
-      obs_prior_mean = sum( obs_prior )/(1.0_r8*ens_size) ! overwrite obs_prior_mean for PFF
+      obs_prior = inner_p(ens_size*(inner-1)+1: ens_size*inner)  ! overwrite obs_prior for PFF
+      obs_inc   = Binv_inner_increment(:,inner)                  ! overwrite obs_inc for PFF
+      obs_prior_mean = sum( obs_prior )/(1.0_r8*ens_size)        ! overwrite obs_prior_mean for PFF
       obs_prior_var = 0.0_r8 ! overwrite obs_prior_var for PFF
 
       do cc = 1, ens_size
@@ -928,8 +988,8 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
       ! uncomment the below two lines to get "B localization"
       ! comment out the below two lines to do the original DART 'increment localization'
    
-      call get_state_meta_data(inner_index(inner),base_obs_loc) 
-      base_obs_type  = -inner_index(inner)
+      !call get_state_meta_data(inner_index(inner),base_obs_loc) 
+      !base_obs_type  = -inner_index(inner)
 
       !if(my_task_id()==0) print*, 'base_obs_type = ', base_obs_type
 
@@ -942,7 +1002,7 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
          ! my_state_loc(state_index) should be the location of the j-th state
          ! needs to be updated (j=1,num_close_states)
 
-         close_state_dist(j) = get_dist(base_obs_loc, my_state_loc(state_index))
+         !close_state_dist(j) = get_dist(base_obs_loc, my_state_loc(state_index))
 
          !print*, 'dist = ',close_state_dist(j)
          !write(*,*) 'dist between ',state_index,'and inner domain',base_obs_type, 'is ', close_state_dist(j)
@@ -954,8 +1014,10 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
 
          ! Compute the covariance localization and adjust_obs_impact factors
          ! (module storage)
-         final_factor = cov_and_impact_factors(base_obs_loc, base_obs_type, my_state_loc(state_index), &
-            my_state_kind(state_index), close_state_dist(j), cutoff_rev)
+         !final_factor = cov_and_impact_factors(base_obs_loc, base_obs_type, my_state_loc(state_index), &
+         !   my_state_kind(state_index), close_state_dist(j), cutoff_rev)
+         final_factor = 1.0_r8
+
 
          !if (my_task_id()==0) then
          !   if (any(inner_index(1:Ni)==state_index)) then
@@ -989,8 +1051,6 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
             my_state_indx(state_index), final_factor, correl, .false., .false., &
             state_prior=ens_handle%state_prior(1:ens_size, state_index), &
             one_inner_to_state_inc=one_inner_to_state_inc)
-
-         !print*, 'ratio = ', one_inner_to_state_inc(1:3)/Binv_inner_increment(1:3, inner)
 
          ! Compute spatially-varying state space inflation
          if(local_varying_ss_inflate) then
@@ -1033,6 +1093,10 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
    if (allocated(inner_increment) )      deallocate( inner_increment      )
    if (allocated(Binv_inner_increment) ) deallocate( Binv_inner_increment )
    if (allocated(norm_inner_increment) ) deallocate( norm_inner_increment )
+   if (allocated(prior_cov) )            deallocate( prior_cov            )
+   if (allocated(prior_cov_inv) )        deallocate( prior_cov_inv        )
+   if (allocated(input_inverse) )        deallocate( input_inverse        )
+   if (allocated(inner_p_mean) )         deallocate( inner_p_mean         )
 
 ! BELOW is the original DART code (use obs_inc to update states)
 !         ! Compute the covariance localization and adjust_obs_impact factors (module storage)
@@ -1130,7 +1194,7 @@ end subroutine filter_assim
 subroutine obs_increment(hx_c, ens_size, obs, obs_var, obs_inc,            &
    inflate, my_cov_inflate, my_cov_inflate_sd,  net_a,                     &
    iter, max_iter, initial_alpha, Ni, inner_index, inner_p, inner_c, hx_p, &
-   Binv_inner_increment, inner_increment, norm_inner_increment, base_obs_type, base_obs_loc )
+   inner_increment, norm_inner_increment, base_obs_type, base_obs_loc )
 
 ! Given the ensemble prior for an observation, the observation, and
 ! the observation error variance, computes increments and adjusts
@@ -1159,7 +1223,6 @@ integer(i8), intent(in), optional :: inner_index(Ni)
 real(r8),    intent(in), optional :: inner_p(ens_size*Ni), inner_c(ens_size*Ni)
 real(r8),    intent(in), optional :: hx_p(ens_size) ! prior H(x); not at this iteration
 real(r8),   intent(out), optional :: inner_increment(ens_size, Ni)
-real(r8),   intent(out), optional :: Binv_inner_increment(ens_size, Ni)
 real(r8),   intent(out), optional :: norm_inner_increment(Ni)
 
 integer,     intent(in), optional :: base_obs_type ! the obs type
@@ -1262,7 +1325,7 @@ filter_kind = 9
                              inner_index,                               &
                              obs, obs_var, base_obs_type, base_obs_loc, &
                              initial_alpha,                             &
-                             Binv_inner_increment, inner_increment, norm_inner_increment )
+                             inner_increment, norm_inner_increment )
    else
       call error_handler(E_ERR,'obs_increment', &
               'Illegal value of filter_kind in assim_tools namelist [1-8 OK]', source)
@@ -1300,7 +1363,7 @@ subroutine obs_increment_pff(iter, max_iter, ens_size, Ni,              &
                              inner_index,                               &
                              obs, obs_var, base_obs_type, base_obs_loc, &
                              initial_alpha,                             &
-                             Binv_inner_increment, inner_increment, norm_inner_increment )
+                             inner_increment, norm_inner_increment )
 !========================================================================
 !
 ! PFF version of "inner domain" increment
@@ -1317,13 +1380,11 @@ integer,             intent(in) :: base_obs_type  ! the observation type
 type(location_type), intent(in) :: base_obs_loc
 
 real(r8),   intent(inout) :: initial_alpha
-real(r8),     intent(out) :: Binv_inner_increment(ens_size, Ni)
 real(r8),     intent(out) :: inner_increment(ens_size, Ni)
 real(r8),     intent(out) :: norm_inner_increment(Ni)
 
 ! the following are temporary variables
 real(r8) :: prior_cov(Ni,Ni), prior_cov_inv(Ni,Ni), input_inverse(Ni,Ni)
-real(r8) :: prior_cov_unlocal(Ni,Ni), prior_cov_unlocal_inv(Ni,Ni)
 !real(r8) :: kernel(ens_size, ens_size, Ni) ! matrix-valued kernel
 real(r8) :: kernel(ens_size, ens_size) ! scalar-valued kernel
 real(r8) :: argument
@@ -1343,9 +1404,6 @@ real(r8) :: input_x(ens_size, Ni)
 real(r8) :: inner_inc_T(Ni, ens_size) ! temporarily used for Binv multiplication
 real(r8) :: particle_dis(ens_size, ens_size)
 
-! weird test
-real(r8) :: orig_inner_increment(ens_size, Ni), new_inner_increment(ens_size,Ni)
-
 !real(r8) :: min_kernel_value
 integer  :: i,j,k
 
@@ -1353,21 +1411,11 @@ type(location_type):: inner_loc(Ni)
 
 ! adaptive kernel width
 integer  :: inner_var_type
-
 real(r8) :: prior_hx_mean, prior_hx_var, post_hx_var, post_hx_mean, current_hx_mean, current_hx_var
-
-real(r8) :: HBHT, var_ratio, obs_space_inc(ens_size)
+real(r8) :: var_ratio, obs_space_inc(ens_size)
 real(r8) :: cov_xy(Ni)
 
-real(r8) :: test_ccwu(Ni,Ni)
-!print*, 'I am in the PFF increment subroutine!'
 
-!real(r8) :: S(2),U(4,4),VT(2,2),A(4,2)
-!real(r8),allocatable:: work(:)
-!integer  :: info_svd, LWORK
-!real(r8) :: testinput(200,200), testinverse(200,200)
-
-!character:: output_name*50
 
 ! Get the location informaiton for inner domain:
 do i=1,Ni
@@ -1377,90 +1425,34 @@ do i=1,Ni
    !if (my_task_id()==0) print*, '          height = ', inner_loc(i)%vloc,'( vert = ', inner_loc(i)%which_vert,' )'
 enddo
 
-
-!write(*,*) Ni
-!if (my_task_id()==0) print*,  inner_index
-!write(*,*) get_dist(inner_loc(1), inner_loc(2))
-!write(*,*) get_dist(inner_loc(1), inner_loc(3))
-!write(*,*) get_dist(inner_loc(1), inner_loc(4))
-!write(*,*) get_dist(inner_loc(2), inner_loc(3))
-!write(*,*) get_dist(inner_loc(2), inner_loc(4))
-!write(*,*) get_dist(inner_loc(3), inner_loc(4))
-
-
-!print*,'pass inner domain 1'
-! compute the localization factor for each pair of inner domain variables:
-do i=1,Ni
-   do j=1,Ni
-      if (j.ge.i) then
-         dd(j,i)         = get_dist(inner_loc(j), inner_loc(i))
-         !if (j==i) dd(j,i) = 0.0_r8
-         cov_factor(j,i) = comp_cov_factor(dd(j,i),cutoff)
-      else
-         dd(j,i)         = dd(i,j)
-         cov_factor(j,i) = cov_factor(i,j)
-      endif
-   enddo
-enddo
-
 ! caluclate the prior mean, prior covariance matrix
 prior_mean = sum(inner_pmatrix,dim=1)/ens_size
 
-!if (my_task_id()==0) then
-!   do i=1,Ni
-!      print*, 'cov factor (',i,',:) =', cov_factor(i,:)
-!   enddo
-!endif
-
-! the localized prior covariance matrix (need to make sure if the localization is correct)
+! the "unlocalized" prior covariance matrix
+! Note that in this version the localization is done directly on the final increment
 do i=1,Ni
    do j=1,Ni
       if (j.ge.i) then
-         prior_cov(j,i) = cov_factor(j,i)*dot_product(inner_pmatrix(:,j)-prior_mean(j), &
-                                                      inner_pmatrix(:,i)-prior_mean(i))/(ens_size-1)
-         !prior_cov_unlocal(j,i)         = dot_product(inner_pmatrix(:,j)-prior_mean(j), &
-         !                                             inner_pmatrix(:,i)-prior_mean(i))/(ens_size-1)
+         prior_cov(j,i) = dot_product(inner_pmatrix(:,j)-prior_mean(j), &
+                                      inner_pmatrix(:,i)-prior_mean(i))/(ens_size-1)
       else
          prior_cov(j,i) = prior_cov(i,j)
-         !prior_cov_unlocal(j,i) = prior_cov_unlocal(i,j)
       endif
    enddo
 enddo
-
 
 ! calculate the inverse of prior covariance matrix:
 ! CAUTIOUS!! by calling the subroutine "inverse" might actually change the value of
 ! prior_cov. Need to check the code for why?
 
 input_inverse = prior_cov ! input_inverse is a dummy variable that passes prior_cov to the inverse
-!write(*,*) prior_cov, input_inverse
-
-!call inverse(input_inverse, prior_cov_inv, Ni)
-
-!write(*,*) prior_cov, input_inverse
-!write(*,*) '(call inverse) prior cov inv = ',prior_cov_inv
 
 ! use SVD to calculate the inverse of prior covariance (of inner domain)
 call svd_pseudo_inverse(input_inverse,prior_cov_inv,Ni,Ni,min_eig_ratio)
 
-!input_inverse = prior_cov_unlocal
-!call svd_pseudo_inverse(input_inverse,prior_cov_unlocal_inv,Ni,Ni,min_eig_ratio)
-
-
-!test_ccwu = matmul(prior_cov, prior_cov_inv)
-
-!if (my_task_id()==0.and.iter==1) then
-!   do i=1,Ni
-!      print*, 'B_inv = ', prior_cov_inv(i,:)
-!   enddo
-!endif
-
 ! ====== estimation of the adjoint of the observation operator ======
-!write(*,*) 'before inner_c (first member) = ',inner_cmatrix(1,:)
 
 input_x = inner_cmatrix
-
-!write(*,*) 'before call input_x = ',input_x(1:5,1)
 
 ! ----- METHOD 1: linear regression: -----
 call HT_regress(HT, input_x, hx_c, ens_size, Ni, min_eig_ratio)
@@ -1484,12 +1476,6 @@ endif
 !   enddo
 !enddo
 
-
-!write(*,*) 'after inner_c (first member) =',inner_cmatrix(1,:)
-!write(*,*) 'after call input_x = ',input_x(1:5,1)
-!write(*,*) 'HT (member 1)=',HT(1,:)
-!input_x = inner_cmatrix
-
 ! ----- METHOD 2: kernel approx: -----
 !call HT_kernel(HT, input_x, hx_c, ens_size, Ni, 0.05*1.0_r8)
 
@@ -1499,18 +1485,14 @@ endif
 ! ====== END OF estimate the adjoint of the observation operator ======
 
 
-
-
 ! in the following, calculate the gradient of the posterior pdf
-! Decompose the log posterior = log likelihood (like_pdf) + log prior (prir_pdf)
+! Decompose the B* (log posterior) = B*log likelihood (like_pdf) + B*log prior (prir_pdf)
 do i=1,ens_size
-   like_pdf(i,:) = HT(i,:)*(obs-hx_c(i))/obs_var
-   prir_pdf(i,:) = -matmul( prior_cov_inv, inner_cmatrix(i,:)-prior_mean(:) )
+   like_pdf(i,:) = matmul( prior_cov, HT(i,:)*(obs-hx_c(i))/obs_var)
+   prir_pdf(i,:) = -(inner_cmatrix(i,:)-prior_mean(:))
 enddo
 
 post_pdf = like_pdf + prir_pdf
-
-
 
 
 ! ====== Adaptive kernel width algorithm ======
@@ -1519,7 +1501,6 @@ do i=1,ens_size
    do j=1,ens_size
       dx                = inner_cmatrix(i,:) - inner_cmatrix(j,:)
       particle_dis(i,j) = dot_product(dx,matmul(prior_cov_inv, dx))
-      !particle_dis(i,j) = dot_product(dx,matmul(prior_cov_unlocal_inv,dx))
    enddo
 enddo
 
@@ -1547,16 +1528,15 @@ do i=1,ens_size
    do j=1,ens_size
       dx              = inner_cmatrix(i,:) - inner_cmatrix(j,:)
       kernel(i,j)     = exp(-particle_dis(i,j)/ker_alpha)
-      grad_ker(i,j,:) = 2*matmul(prior_cov_inv,dx)/ker_alpha*kernel(i,j)
-      !grad_ker(i,j,:) = 2*matmul(prior_cov_unlocal_inv,dx)/ker_alpha*kernel(i,j)
+      grad_ker(i,j,:) = 2*dx/ker_alpha*kernel(i,j)
+
+      !grad_ker(i,j,:) = 2*matmul(prior_cov_inv,dx)/ker_alpha*kernel(i,j)
    enddo
 enddo
 
 !if ((my_task_id().eq.0).and.(iter.eq.1)) then
 !   print*, 'minimum kernel = ', minval(kernel)
 !endif
-
-
 
 
 
@@ -1599,44 +1579,21 @@ eps_assim = eps_type
 
 ! Calculate the increment (and its norm) for scalar-valued kernel:
 do i=1,ens_size
-   Binv_inner_increment(i,:) = 0.0_r8
-!   inner_inc(i,:) = eps_assim*post_pdf(i,:)
+   inner_increment(i,:) = 0.0_r8
+
    do j=1,ens_size
-      Binv_inner_increment(i,:) = Binv_inner_increment(i,:) + &
-                                   eps_assim*( kernel(i,j)*post_pdf(j,:) + grad_ker(i,j,:) )/(1.0_r8*ens_size)
+      inner_increment(i,:) = inner_increment(i,:) + &
+                                eps_assim*( kernel(i,j)*post_pdf(j,:) + grad_ker(i,j,:) )/(1.0_r8*ens_size)
    enddo
 end do
 
-!Binv_inner_increment = matmul(Binv_inner_increment, prior_cov_inv)
-
-
-! Weird test (2022/01/27) 
-! make the inner domain increment 'localized' by obs-state distance
-!orig_inner_increment = matmul(Binv_inner_increment, prior_cov)
-!do i=1,Ni
-!   dd2(i)         = get_dist(inner_loc(i), base_obs_loc)
-!   cov_factor2(i) = comp_cov_factor(dd2(i), cutoff)
-!   new_inner_increment(:,i) = orig_inner_increment(:,i)*cov_factor2(i)
-!enddo
-
-!Binv_inner_increment = matmul(new_inner_increment, prior_cov_inv)
-
 
 ! Calculate the norm of inner domain increment for each component:
-!do i=1,Ni
-!   norm_inner_increment(i) = norm2(Binv_inner_increment(:,i)/eps_assim)
-!enddo
-
-! also output B*(Binv_inner_increment) to verify the code:
-inner_increment = matmul(Binv_inner_increment, prior_cov)
-
 do i=1,Ni
    norm_inner_increment(i) = norm2(inner_increment(:,i)/eps_assim)
 enddo
 
-!if (my_task_id()==0) print*, 'inc = ', sum(inner_increment,dim=1)/ens_size
    
-
 
 ! ======== To speed up the iteration, try EAKF update in the first iteration ========
 ! still testing...
@@ -1652,14 +1609,6 @@ current_hx_var  = sum((hx_c-current_hx_mean)**2)/(ens_size-1)
 post_hx_mean = prior_hx_var/(prior_hx_var + obs_var)*obs + &
                obs_var    /(prior_hx_var + obs_var)*prior_hx_mean
 
-! adaptive learning rate algorithm:
-!if (iter == 2 .and. norm_obs(iter)>norm_obs(1) ) then
-!   eps_obs(1:max_iter) = eps_obs(1)*0.8
-!   ! re-do the first iteration!!!
-!   redo_first_iter = .true.
-!else 
-!   redo_first_iter = .false.
-!endif
 
 ! first step EAKF/EnKF update
 if (iter==1000) then
@@ -1671,23 +1620,7 @@ if (iter==1000) then
    obs_space_inc = sqrt(var_ratio) * (hx_c - prior_hx_mean) + post_hx_mean - hx_c
 
    ! update the inner domain
-
-   ! method 1:
-   !HBHT = dot_product(matmul(HT(1,:),prior_cov),HT(1,:))
-   
-   !do j=1,ens_size
-
-   !   HBHT = dot_product(matmul(HT(j,:),prior_cov),HT(j,:))
-
-   !   do i=1,Ni
-   !      Binv_inner_increment(j,i) = HT(j,i)/HBHT*obs_space_inc(j)
-   !   enddo
-
-   !enddo
-
-   !inner_increment = matmul(Binv_inner_increment, prior_cov)
-
-   ! method 2 (the exact EAKF for the inner domain):
+   ! Note: the exact EAKF for the inner domain:
 
    ! compute the localization factor for state-obs pair:
    do i=1,Ni
@@ -1697,20 +1630,15 @@ if (iter==1000) then
                                                                 hx_p-prior_hx_mean)/(ens_size-1)
    enddo
 
-   !print*, cov_factor2(1:Ni)
-
    ! linear regression:
    do i=1,ens_size
-      inner_increment(i,:)      = cov_xy(:)/prior_hx_var*obs_space_inc(i)
-      Binv_inner_increment(i,:) = matmul(prior_cov_inv, cov_xy(:)/prior_hx_var*obs_space_inc(i))
+      inner_increment(i,:) = cov_xy(:)/prior_hx_var*obs_space_inc(i)
    enddo
-
 
 endif
 
 post_hx_mean = prior_hx_var/(prior_hx_var + obs_var)*obs + &
                obs_var    /(prior_hx_var + obs_var)*prior_hx_mean
-
 
 
 ! print all the diagnostics
@@ -1719,46 +1647,14 @@ if (my_task_id()==0) print*, '      eps_assim = ',eps_assim
 if (my_task_id()==0) print*, '      current std = ', sqrt(current_hx_var), 'posterior std =', sqrt(post_hx_var)
 if (my_task_id()==0) print*, '      current mean = ', current_hx_mean, 'posterior mean =', post_hx_mean
 
-! only used if we have preconditioned on B:
-!inner_inc = matmul(inner_inc,prior_cov_inv)
-!write(*,*) 'inner inc (after b inv) = ', inner_inc(1,1), inner_inc(16,1)
 
-!write(*,*) 'post pdf =', post_pdf(1,1), post_pdf(16,1)
-!write(*,*) 'incr     =', inner_inc(1,1), inner_inc(16,1)
-
-
-
-!norm_inc = sqrt(norm_inc)
-
-if (my_task_id() ==1) then
-
-!write(*,*) iter
-! create output file:
-!if (iter.eq.1) then
-!   output_name='./output/PFF_linear_one_obs_x.dat'
-   !open(12,file=output_name,status='new',form='unformatted',access='direct',recl=4*Ni*ens_size)
-   !write(12, REC=iter  ) inner_cmatrix
-   !write(12, REC=iter+1) inner_cmatrix + inner_inc
-!endif
-
-!write(12, REC=iter+1) inner_cmatrix + inner_inc
-!write(*,*) 'CCWU pff iteration ', iter
-!write(*,*) 'CCWU prior = ', inner_pmatrix
-!write(*,*) 'CCWU x = ', inner_cmatrix
-!write(*,*) 'CCWU H(x) = ', ens
-!write(*,*) 'CCWU obs = ', obs
-!write(*,*) 'CCWU obs_var = ', obs_var
-!write(*,*) 'CCWU ker (1,2,:) =', kernel(1,2,:)
-!write(*,*) 'CCWU: grad_ker(1,4,:) = ', grad_ker(1,4,:)
-!write(*,*) 'CCWU: grad_ker(2,4,:) = ', grad_ker(2,4,:)
-!write(*,*) 'CCWU ker_width = ', ker_width
-!write(*,*) 'CCWU post_pdf = ', post_pdf
-!write(*,*) 'CCWU inner_inc = ', inner_inc
-!write(*,*) 'CCWU :: B = ', prior_cov
-endif
 
 
 end subroutine obs_increment_pff
+
+
+
+
 
 subroutine HT_kernel(HT, X, Hx, Np, Ni, alpha)
 ! estimate the adjoint of the observation operator based on kernel method
