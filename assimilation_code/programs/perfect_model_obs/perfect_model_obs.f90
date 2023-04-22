@@ -20,10 +20,13 @@ use obs_sequence_mod,     only : read_obs_seq, obs_type, obs_sequence_type,     
                                  write_obs_seq, get_num_obs, init_obs, assignment(=),       &
                                  static_init_obs_sequence, get_num_qc, read_obs_seq_header, &
                                  set_qc_meta_data, delete_seq_head,       &
-                                 delete_seq_tail, destroy_obs, destroy_obs_sequence
+                                 delete_seq_tail, destroy_obs, destroy_obs_sequence,        &
+                                 set_obs_def
                                  
 
-use      obs_def_mod,     only : obs_def_type, get_obs_def_error_variance, get_obs_def_time
+use      obs_def_mod,     only : obs_def_type, get_obs_def_error_variance, get_obs_def_time, &
+                                 set_obs_def_error_variance
+
 use    obs_model_mod,     only : move_ahead, advance_state, set_obs_model_trace
 use  assim_model_mod,     only : static_init_assim_model, get_model_size,                    &
                                  get_initial_condition
@@ -541,11 +544,22 @@ AdvanceTime: do
          call get_obs_from_key(seq, keys(i), obs)
          call get_obs_def(obs, obs_def)
 
+         ! CCHU (2023/04/20): for situation-dependent error variance
+         !                    reset the observation error variance:
+         call set_obs_def_error_variance(obs_def, (0.25*true_obs(1))**2 )
+
+         !print*, get_obs_def_error_variance(obs_def)
+
          ! If observation is not being evaluated or assimilated, skip it
          ! Ends up setting a 1000 qc field so observation is not used again.
          if( qc_ens_handle%vars(i, 1) == 0 ) then
             obs_value(1) = random_gaussian(random_seq, true_obs(1), &
                sqrt(get_obs_def_error_variance(obs_def)))
+
+            ! state-dependent obs error:
+            !obs_value(1) = random_gaussian(random_seq, true_obs(1), &
+            !   0.25*true_obs(1)*sqrt(get_obs_def_error_variance(obs_def)))
+
 
             ! FIX ME SPINT: if the foward operater passed can we directly set the
             ! qc status?
@@ -568,9 +582,12 @@ AdvanceTime: do
          call set_obs_values(obs, obs_value, 1)
          call set_obs_values(obs, true_obs, 2)
 
+         ! CCHU: overwrite the new obs error
+         call set_obs_def(obs, obs_def)
+
          ! Insert the observations into the sequence first copy
          call set_obs(seq, obs, keys(i))
-
+ 
       enddo
 
    endif

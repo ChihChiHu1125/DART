@@ -145,7 +145,7 @@ if (return_now) return
 
 !where (istatus == 0) wspd = sqrt(uwind**2 + vwind**2)
 !where (istatus == 0) wspd = exp(uwind/3)
-where (istatus ==0) wspd = exp( (slp-100000)/500 )  
+where (istatus ==0) wspd = exp( (slp-100000)/100 )  
 
 end subroutine get_expected_windspeed
 

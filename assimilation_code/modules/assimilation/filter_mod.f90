@@ -1163,7 +1163,7 @@ call timestamp_message('Before writing output sequence file')
 
 ! Only pe 0 outputs the observation space diagnostic file
 ! CCHU: 2022/01/03: add one more criterion: when async ==0:
-if((my_task_id() == 0).and.( async == 0 ) ) call write_obs_seq(seq, obs_sequence_out_name)
+if((my_task_id() == 0) .and. (async ==0 ) ) call write_obs_seq(seq, obs_sequence_out_name)
 
 call timestamp_message('After  writing output sequence file')
 call     trace_message('After  writing output sequence file')

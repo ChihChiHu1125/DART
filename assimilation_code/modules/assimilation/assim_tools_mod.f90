@@ -330,6 +330,7 @@ real(r8) :: obs_qc, cutoff_rev, cutoff_orig
 real(r8) :: orig_obs_prior_mean(num_groups), orig_obs_prior_var(num_groups)
 real(r8) :: obs_prior_mean(num_groups), obs_prior_var(num_groups)
 real(r8) :: vertvalue_obs_in_localization_coord, whichvert_real
+real(r8) :: increment(ens_size)
 real(r8), allocatable :: close_obs_dist(:)
 real(r8), allocatable :: close_state_dist(:)
 
@@ -566,7 +567,8 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
    call get_obs_from_key(obs_seq, keys(i), observation)
    call get_obs_def(observation, obs_def)
    base_obs_loc = get_obs_def_location(obs_def)
-   obs_err_var = get_obs_def_error_variance(obs_def)
+   !CCHU 2023/03/24
+   !obs_err_var = get_obs_def_error_variance(obs_def)
    base_obs_type = get_obs_def_type_of_obs(obs_def)
    if (base_obs_type > 0) then
       base_obs_kind = get_quantity_for_type_of_obs(base_obs_type)
@@ -575,6 +577,10 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
    endif
    ! Get the value of the observation
    call get_obs_values(observation, obs, obs_val_index)
+
+   !obs_err_var = (0.25*obs(1))**2
+   obs_err_var = (0.25*obs(1))**2
+
 
    ! Find out who has this observation and where it is
    call get_var_owner_index(ens_handle, int(i,i8), owner, owners_index)
@@ -703,12 +709,21 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
          my_state_kind(state_index), close_state_dist(j), cutoff_rev)
 
       if(final_factor <= 0.0_r8) cycle STATE_UPDATE
-      
+     
+
       call obs_updates_ens(ens_size, num_groups, ens_handle%copies(1:ens_size, state_index), &
          my_state_loc(state_index), my_state_kind(state_index), obs_prior, obs_inc, &
          obs_prior_mean, obs_prior_var, base_obs_loc, base_obs_type, obs_time, &
          net_a, grp_size, grp_beg, grp_end, i, &
-         my_state_indx(state_index), final_factor, correl, local_varying_ss_inflate, inflate_only)
+         my_state_indx(state_index), final_factor, correl, local_varying_ss_inflate, inflate_only, &
+         increment)
+
+      !if ((state_index .eq. 1) .or. (state_index.eq.2).or.(state_index.eq.61).or.(state_index.eq.62)) then
+      !   print*, increment(1)
+      !endif
+
+
+
 
       ! Compute spatially-varying state space inflation
       if(local_varying_ss_inflate) then
@@ -2090,7 +2105,7 @@ end subroutine update_ens_from_weights
 subroutine obs_updates_ens(ens_size, num_groups, ens, ens_loc, ens_kind, &
    obs_prior, obs_inc, obs_prior_mean, obs_prior_var, obs_loc, obs_type, obs_time,    &
    net_a, grp_size, grp_beg, grp_end, reg_factor_obs_index,         &
-   reg_factor_ens_index, final_factor, correl, correl_needed, inflate_only)
+   reg_factor_ens_index, final_factor, correl, correl_needed, inflate_only, increment)
 
 integer,             intent(in)  :: ens_size
 integer,             intent(in)  :: num_groups
@@ -2115,7 +2130,8 @@ real(r8),            intent(out) :: correl(num_groups)
 logical,             intent(in)  :: correl_needed
 logical,             intent(in)  :: inflate_only
 
-real(r8) :: reg_coef(num_groups), increment(ens_size)
+real(r8), intent(out), optional :: increment(ens_size)
+real(r8) :: reg_coef(num_groups)
 real(r8) :: reg_factor
 integer  :: group, grp_bot, grp_top
 
