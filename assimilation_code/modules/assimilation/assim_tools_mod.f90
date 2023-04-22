@@ -195,7 +195,10 @@ logical  :: distribute_mean  = .false.
 integer, parameter :: max_ni = 50
 
 ! CCHU: namelist for PFF-DART:
-real(r8) :: min_kernel_value, eps_type, min_eig_ratio
+real(r8) :: min_kernel_value, learning_rate_fac, max_learning_rate, min_eig_ratio
+real(r8) :: eakffg_inf, fixed_ker_alpha
+integer  :: obs_adj_kind
+logical  :: eakffg_io, adaptive_ker_io
 
 namelist / assim_tools_nml / filter_kind, cutoff, sort_obs_inc, &
    spread_restoration, sampling_error_correction,                          &
@@ -206,7 +209,8 @@ namelist / assim_tools_nml / filter_kind, cutoff, sort_obs_inc, &
    distribute_mean, close_obs_caching,                                     &
    adjust_obs_impact, obs_impact_filename, allow_any_impact_values,        &
    convert_all_state_verticals_first, convert_all_obs_verticals_first,     &
-   min_kernel_value, eps_type, min_eig_ratio
+   min_eig_ratio, adaptive_ker_io, min_kernel_value, fixed_ker_alpha,      &
+   obs_adj_kind, learning_rate_fac, max_learning_rate, eakffg_io, eakffg_inf
 
 !============================================================================
 
@@ -631,6 +635,8 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
    call get_obs_from_key(obs_seq, keys(i), observation)
    call get_obs_def(observation, obs_def)
    base_obs_loc = get_obs_def_location(obs_def)
+
+   ! CCHU 2023/03/24
    obs_err_var = get_obs_def_error_variance(obs_def)
    base_obs_type = get_obs_def_type_of_obs(obs_def)
    if (base_obs_type > 0) then
@@ -640,6 +646,9 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
    endif
    ! Get the value of the observation
    call get_obs_values(observation, obs, obs_val_index)
+
+   ! should be different for different obs operator
+   !obs_err_var = (0.25*obs(1))**2
 
    ! Find out who has this observation and where it is
    call get_var_owner_index(ens_handle, int(i,i8), owner, owners_index)
@@ -959,6 +968,14 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
       inner_increment(:,inner) = inner_c(ens_size*(inner-1)+1: ens_size*inner) - &
                                  inner_p(ens_size*(inner-1)+1: ens_size*inner)
    enddo
+
+   ! print out the inner domain increment!
+   if (my_task_id()==0) print*, ' '
+   if (my_task_id()==0) print*, '       obs value =', obs
+   if (my_task_id()==0) print*, '       H(x) prior mean =', sum(hx_p)/(ens_size*1.0_r8)
+   if (my_task_id()==0) print*, '       H(x) post  mean =', sum(hx_c)/(ens_size*1.0_r8)
+   if (my_task_id()==0) print*, '       |inner inc| =', sum(abs(inner_increment),dim=1)/(ens_size*1.0_r8)
+!   if (my_task_id()==0) print*, 'inner inc =',  sum(inner_increment(1:3,:),dim=2)/4
 
    Binv_inner_increment = matmul(inner_increment, prior_cov_inv)
 
@@ -1294,6 +1311,8 @@ else if (prior_var == 0.0_r8) then
 
    ! if all state values are the same, nothing changes.
    obs_inc(:) = 0.0_r8
+   inner_increment = 0.0_r8
+   norm_inner_increment  = 0.0_r8
 
 else
 ! CCWU (test PFF) SO...
@@ -1326,6 +1345,7 @@ filter_kind = 9
                              obs, obs_var, base_obs_type, base_obs_loc, &
                              initial_alpha,                             &
                              inner_increment, norm_inner_increment )
+
    else
       call error_handler(E_ERR,'obs_increment', &
               'Illegal value of filter_kind in assim_tools namelist [1-8 OK]', source)
@@ -1370,6 +1390,7 @@ subroutine obs_increment_pff(iter, max_iter, ens_size, Ni,              &
 
 !Use lapack_interfaces, Only: dgesvd
 
+
 integer,      intent(in)  :: iter, max_iter, ens_size, Ni 
 real(r8),     intent(in)  :: hx_p(ens_size), hx_c(ens_size)
 real(r8),     intent(in)  :: inner_pmatrix(ens_size, Ni), inner_cmatrix(ens_size, Ni)
@@ -1384,13 +1405,14 @@ real(r8),     intent(out) :: inner_increment(ens_size, Ni)
 real(r8),     intent(out) :: norm_inner_increment(Ni)
 
 ! the following are temporary variables
+real(r8) :: norm_nodim_inner_increment(Ni)
 real(r8) :: prior_cov(Ni,Ni), prior_cov_inv(Ni,Ni), input_inverse(Ni,Ni)
 !real(r8) :: kernel(ens_size, ens_size, Ni) ! matrix-valued kernel
 real(r8) :: kernel(ens_size, ens_size) ! scalar-valued kernel
 real(r8) :: argument
 real(r8) :: dx(Ni)
 real(r8) :: kernel_width(Ni), prior_mean(Ni)
-real(r8) :: obs_mean, inner_mean(Ni), HT(ens_size, Ni)
+real(r8) :: obs_mean, inner_mean(Ni), HT(ens_size, Ni), BHT(ens_size, Ni), HBHT(ens_size)
 real(r8) :: post_pdf(ens_size, Ni), like_pdf(ens_size, Ni), prir_pdf(ens_size, Ni)
 real(r8) :: ker_width(Ni)
 real(r8) :: ker_alpha
@@ -1403,7 +1425,6 @@ real(r8) :: dd2(Ni), cov_factor2(Ni)
 real(r8) :: input_x(ens_size, Ni)
 real(r8) :: inner_inc_T(Ni, ens_size) ! temporarily used for Binv multiplication
 real(r8) :: particle_dis(ens_size, ens_size)
-
 !real(r8) :: min_kernel_value
 integer  :: i,j,k
 
@@ -1412,14 +1433,41 @@ type(location_type):: inner_loc(Ni)
 ! adaptive kernel width
 integer  :: inner_var_type
 real(r8) :: prior_hx_mean, prior_hx_var, post_hx_var, post_hx_mean, current_hx_mean, current_hx_var
+real(r8) :: inf_obs_var, inf_post_hx_mean
 real(r8) :: var_ratio, obs_space_inc(ens_size)
 real(r8) :: cov_xy(Ni)
+
+
+! Although not necessarily used, the following info can be handy
+! if assuming all Gaussian solution, the posterior variance/mean will be:
+prior_hx_mean = sum(hx_p)/ens_size
+prior_hx_var  = sum((hx_p-prior_hx_mean)**2)/(ens_size-1)
+post_hx_var   = obs_var*prior_hx_var/(obs_var + prior_hx_var)
+post_hx_mean  = prior_hx_var/(prior_hx_var + obs_var)*obs + &
+                 obs_var    /(prior_hx_var + obs_var)*prior_hx_mean
+
+current_hx_mean = sum(hx_c)/ens_size
+current_hx_var  = sum((hx_c-current_hx_mean)**2)/(ens_size-1)
+
+! special case: only for the second iteration
+! examine if the learning rate at the 1st iteration is too large:
+
+!if (iter .eq. 2) then
+!   if ( (current_hx_mean-prior_hx_mean)*(current_hx_mean-obs) .gt. 0 ) then
+!      inner_increment = 0.0_r8
+!      norm_inner_increment = 0.0_r8
+!      if (my_task_id()==0) print*, '1st iteration learning rate too large, return...'
+!      return
+
+!   endif
+!endif
 
 
 
 ! Get the location informaiton for inner domain:
 do i=1,Ni
    call get_state_meta_data(inner_index(i), inner_loc(i),inner_var_type)
+   !IF (my_task_id()==0) print*, 'inner index = ', inner_index
    !if (my_task_id()==0) print*, 'inner domain var ',i,' var type =', inner_var_type
    !if (my_task_id()==0 .and. iter ==1 ) print*, '  location lat  = ', inner_loc(i)%lat/3.1415*180., ' lon =',inner_loc(i)%lon/3.1415*180.
    !if (my_task_id()==0) print*, '          height = ', inner_loc(i)%vloc,'( vert = ', inner_loc(i)%which_vert,' )'
@@ -1454,33 +1502,42 @@ call svd_pseudo_inverse(input_inverse,prior_cov_inv,Ni,Ni,min_eig_ratio)
 
 input_x = inner_cmatrix
 
-! ----- METHOD 1: linear regression: -----
-call HT_regress(HT, input_x, hx_c, ens_size, Ni, min_eig_ratio)
+if ( obs_adj_kind == 0 ) then
+   ! ----- METHOD 1: linear regression: -----
+   call HT_regress(HT, input_x, hx_c, ens_size, Ni, min_eig_ratio)
 
-if (iter==1) then
-  if (my_task_id()==0 ) print*,'HT=', HT(1,:)
+elseif ( obs_adj_kind == 1 ) then
+   ! the analytical adjoint for exponential H(x)
+   ! CAUTION: need to manually check if the adjoint is correct!!
+   do i=1,ens_size
+      do j=1,4
+   !      HT(i,j) = 0.25* hx_c(i)/400
+         HT(i,j) = 0.25* hx_c(i)/100
+      enddo
+   enddo
+
+   !   do j=5,8
+   !      HT(i,j) = 0.25*(inner_cmatrix(i,5)+inner_cmatrix(i,6)+ &
+   !                      inner_cmatrix(i,7)+inner_cmatrix(i,8))/sqrt(ens(i))
+   !      HT(i,j) =  0.5*(inner_cmatrix(i,5)+inner_cmatrix(i,6)+ &
+   !                      inner_cmatrix(i,7)+inner_cmatrix(i,8))
+   !   enddo
+   !enddo
+
+elseif ( obs_adj_kind == 2 ) then
+   ! ----- METHOD 2: kernel approx: -----
+   call HT_kernel(HT, input_x, hx_c, ens_size, Ni, 0.05*1.0_r8)
+
 endif
 
-! the analytical adjoint for exponential H(x)
-!do i=1,ens_size
-!   do j=1,4
-!      HT(i,j) = 0.25* hx_c(i)*0.002
-!   enddo
-!enddo
-
-!   do j=5,8
-!      HT(i,j) = 0.25*(inner_cmatrix(i,5)+inner_cmatrix(i,6)+ &
-!                      inner_cmatrix(i,7)+inner_cmatrix(i,8))/sqrt(ens(i))
-!      HT(i,j) =  0.5*(inner_cmatrix(i,5)+inner_cmatrix(i,6)+ &
-!                      inner_cmatrix(i,7)+inner_cmatrix(i,8))
-!   enddo
-!enddo
-
-! ----- METHOD 2: kernel approx: -----
-!call HT_kernel(HT, input_x, hx_c, ens_size, Ni, 0.05*1.0_r8)
-
-!write(*,*) 'kernel adjoint = ',HT(ens_size,:)
-!write(*,*) '(call svd_pseudo_inverse) prior cov inv = ',prior_cov_inv
+if ((iter==1).and.(my_task_id()==0)) then
+   !print*, 'x (1st)=', inner_cmatrix(:,1)
+   !print*, 'x (2nd)=', inner_cmatrix(:,2)
+   !print*, 'x (3rd)=', inner_cmatrix(:,3)
+   !print*, 'x (4th)=', inner_cmatrix(:,4)
+   !print*, 'H(x) =', hx_c(1:ens_size)
+   print*,'HT=', HT(1,:)
+endif
 
 ! ====== END OF estimate the adjoint of the observation operator ======
 
@@ -1504,21 +1561,27 @@ do i=1,ens_size
    enddo
 enddo
 
-if ( iter.eq.1 ) then
-!   min_kernel_value = 0.1 ! set the minimum kernel value 
-   ker_alpha = -maxval(particle_dis)/log(min_kernel_value)
-   initial_alpha = ker_alpha
+if ( adaptive_ker_io ) then
+   if ( iter.eq.1 ) then
+   !   min_kernel_value = 0.1 ! set the minimum kernel value
+      ker_alpha = -maxval(particle_dis)/log(min_kernel_value)
+      initial_alpha = ker_alpha
+   elseif ( current_hx_var .le. post_hx_var ) then
+      if (my_task_id()==0) print*, 'caution: kernel values are set to 1'
+      ker_alpha = -maxval(particle_dis)/log(0.999999)
+      !ker_alpha = initial_alpha
+   else
+      ker_alpha = initial_alpha
+   endif
+
 else
-   ker_alpha = initial_alpha
+   ker_alpha = fixed_ker_alpha
+
 endif
 
-!if ( iter.le.10) then
-!   ker_alpha = 1.5*initial_alpha
-!endif
-
-!if ((my_task_id().eq.0).and.(iter.eq.1)) then
-!   print*, 'kernel alpha =',ker_alpha
-!endif
+if ((my_task_id().eq.0).and.(iter.eq.1)) then
+   print*, 'kernel alpha =',ker_alpha
+endif
 
 ! ====== END OF Adaptive kernel width algorithm ======
 
@@ -1534,10 +1597,9 @@ do i=1,ens_size
    enddo
 enddo
 
-!if ((my_task_id().eq.0).and.(iter.eq.1)) then
-!   print*, 'minimum kernel = ', minval(kernel)
-!endif
-
+if ((my_task_id().eq.0).and.(iter.eq.1)) then
+   print*, 'minimum kernel = ', minval(kernel)
+endif
 
 
 ! ====== Adaptive learning rate for eps_assim ======
@@ -1570,11 +1632,11 @@ enddo
 !eps_err = min(obs_var/hx_var,1.0_r8)
 !eps_err = min(obs_var/innov_std, 5.0_r8)
 
-eps_assim = eps_type
+!eps_assim = eps_type
+
+!eps_assim = min(eps_type/ (sum(abs(HT(1,:)))/Ni)*1e-3, eps_type)
 
 ! ====== END OF Adaptive learning rate for eps_assim ======
-
-
 
 
 ! Calculate the increment (and its norm) for scalar-valued kernel:
@@ -1582,51 +1644,65 @@ do i=1,ens_size
    inner_increment(i,:) = 0.0_r8
 
    do j=1,ens_size
+!      inner_increment(i,:) = inner_increment(i,:) + &
+!                                eps_assim*( kernel(i,j)*post_pdf(j,:) + grad_ker(i,j,:) )/(1.0_r8*ens_size)
       inner_increment(i,:) = inner_increment(i,:) + &
-                                eps_assim*( kernel(i,j)*post_pdf(j,:) + grad_ker(i,j,:) )/(1.0_r8*ens_size)
+                                           ( kernel(i,j)*post_pdf(j,:) + grad_ker(i,j,:) )/(1.0_r8*ens_size)
+!      inner_increment(i,:) = inner_increment(i,:) + &
+!                                           ( kernel(i,j)*post_pdf(j,:) +  grad_ker(i,j,:) )/sum(kernel(i,:))
    enddo
 end do
 
+!Binv_inner_increment = matmul(inner_increment, prior_cov_inv)
 
 ! Calculate the norm of inner domain increment for each component:
 do i=1,Ni
-   norm_inner_increment(i) = norm2(inner_increment(:,i)/eps_assim)
+!   norm_inner_increment(i) = norm2(inner_increment(:,i)/eps_assim)
+    norm_inner_increment(i) = norm2(inner_increment(:,i)/sqrt(ens_size*1.0_r8))
+!    norm_Binv_inner_increment(i) = norm2(Binv_inner_increment(:,i)/sqrt(ens_size*1.0_r8))
+    norm_nodim_inner_increment(i) = &
+       norm2(inner_increment(:,i)/sqrt(ens_size*1.0_r8))/sqrt(prior_cov(i,i))
 enddo
 
-   
+! Try to make learning rate depend on the actual magnitude of particle flow
+!eps_assim = min( 1.0_r8/(sum(norm_inner_increment)/Ni)*10, eps_type)
+!eps_assim = min(1.0_r8/(sum(norm_Binv_inner_increment)/Ni)*learning_rate_fac, max_learning_rate)
+eps_assim = min(1.0_r8/(norm2(norm_nodim_inner_increment/sqrt(Ni*1.0_r8)))*learning_rate_fac, max_learning_rate)
+
+if (my_task_id()==0) print*, 1.0_r8/(norm2(norm_nodim_inner_increment/sqrt(Ni*1.0_r8)))*learning_rate_fac
+
+inner_increment = eps_assim*inner_increment
+
 
 ! ======== To speed up the iteration, try EAKF update in the first iteration ========
-! still testing...
-
-! if Gaussian solution, the posterior variance will be:
-prior_hx_mean = sum(hx_p)/ens_size
-prior_hx_var  = sum((hx_p-prior_hx_mean)**2)/(ens_size-1)
-post_hx_var   = obs_var*prior_hx_var/(obs_var + prior_hx_var)
-
-current_hx_mean = sum(hx_c)/ens_size
-current_hx_var  = sum((hx_c-current_hx_mean)**2)/(ens_size-1)
-
-post_hx_mean = prior_hx_var/(prior_hx_var + obs_var)*obs + &
-               obs_var    /(prior_hx_var + obs_var)*prior_hx_mean
-
 
 ! first step EAKF/EnKF update
-if (iter==1000) then
+if ( eakffg_io .and. (iter ==1) ) then
+
+   inf_obs_var = eakffg_inf*obs_var ! first-guess EAKF uses inflated obs error var
+
+   ! re-evaluate EAKF solution if use inflated EAKF first-guess:
+   inf_post_hx_mean  = prior_hx_var/(prior_hx_var + inf_obs_var)*obs + &
+                        inf_obs_var/(prior_hx_var + inf_obs_var)*prior_hx_mean
 
    ! Compute the new mean
-   var_ratio = obs_var / (prior_hx_var + obs_var)
+   var_ratio = inf_obs_var / (prior_hx_var + inf_obs_var)
 
    ! Compute sd ratio and shift ensemble
-   obs_space_inc = sqrt(var_ratio) * (hx_c - prior_hx_mean) + post_hx_mean - hx_c
+   obs_space_inc = sqrt(var_ratio) * (hx_p - prior_hx_mean) + inf_post_hx_mean - hx_p
 
    ! update the inner domain
    ! Note: the exact EAKF for the inner domain:
 
    ! compute the localization factor for state-obs pair:
+
+   ! original EAKF =========
    do i=1,Ni
-      dd2(i)         = get_dist(inner_loc(i), base_obs_loc)
-      cov_factor2(i) = comp_cov_factor(dd2(i), cutoff)
-      cov_xy(i)      = cov_factor2(i)*dot_product(inner_pmatrix(:,i)-prior_mean(i), &
+      !dd2(i)         = get_dist(inner_loc(i), base_obs_loc)
+      !cov_factor2(i) = comp_cov_factor(dd2(i), cutoff)
+      !cov_xy(i)      = cov_factor2(i)*dot_product(inner_pmatrix(:,i)-prior_mean(i), &
+      !                                                          hx_p-prior_hx_mean)/(ens_size-1)
+      cov_xy(i)      = dot_product(inner_pmatrix(:,i)-prior_mean(i), &
                                                                 hx_p-prior_hx_mean)/(ens_size-1)
    enddo
 
@@ -1635,20 +1711,29 @@ if (iter==1000) then
       inner_increment(i,:) = cov_xy(:)/prior_hx_var*obs_space_inc(i)
    enddo
 
+
+   ! exact-adjoint EAKF ========
+   !do i=1,ens_size
+   !   BHT(i,:) = matmul(prior_cov, HT(i,:))
+   !   HBHT(i)  = dot_product(HT(i,:), BHT(i,:))
+   !   inner_increment(i,:) = BHT(i,:)/HBHT(i)*obs_space_inc(i)
+   !enddo
+
+   !IF (my_task_id()==0) print*, inner_increment(:,1)
+
 endif
 
-post_hx_mean = prior_hx_var/(prior_hx_var + obs_var)*obs + &
-               obs_var    /(prior_hx_var + obs_var)*prior_hx_mean
-
-
 ! print all the diagnostics
+
+!if (iter .eq. max_iter) then
 if (my_task_id()==0) print*, ' '
+if (my_task_id()==0) print*, '      obs value =', obs
 if (my_task_id()==0) print*, '      eps_assim = ',eps_assim
-if (my_task_id()==0) print*, '      current std = ', sqrt(current_hx_var), 'posterior std =', sqrt(post_hx_var)
+!if (my_task_id()==0) print*, '      current std = ', sqrt(current_hx_var), 'posterior std =', sqrt(post_hx_var)
 if (my_task_id()==0) print*, '      current mean = ', current_hx_mean, 'posterior mean =', post_hx_mean
+if (my_task_id()==0) print*, ' '
 
-
-
+!endif
 
 end subroutine obs_increment_pff
 
@@ -1767,11 +1852,18 @@ subroutine HT_regress(HT, X, Hx, Np, Ni, inv_max_cond_num)
    real(r8),    intent(in) :: X(Np, Ni), Hx(Np), inv_max_cond_num
    integer,     intent(in) :: Np, Ni
    real(r8),   intent(out) :: HT(Np,Ni)
-   real(r8) :: pX(Ni,Np), HT_ensmean(Ni)
+   real(r8) :: pX(Ni,Np), HT_ensmean(Ni), Xp(Np,Ni), Hxp(Np)
    integer  :: i
-! first obtain the pseudo inverse of X:
-call svd_pseudo_inverse(X,pX,Np,Ni,inv_max_cond_num)
-HT_ensmean = matmul(pX, Hx)
+
+! first calculate the perturbation matrices:
+do i=1,Ni
+   Xp(:,i) = X(:,i) - sum(X(:,i))/Np
+enddo
+Hxp = Hx - sum(Hx)/Np
+
+! then obtain the pseudo inverse of Xp:
+call svd_pseudo_inverse(Xp,pX,Np,Ni,inv_max_cond_num)
+HT_ensmean = matmul(pX, Hxp)
 
 do i=1,Np
    HT(i,:) = HT_ensmean

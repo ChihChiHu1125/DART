@@ -263,7 +263,7 @@ logical  :: allow_missing_clm = .false.
 ! CCHU: namelist for PFF-DART:
 integer  :: max_iter
 real(r8) :: eps_adap_decrease, min_eps_adap, norm_increase_tolerance, early_stop_criterion
-
+logical  :: eakffg_io
 
 namelist /filter_nml/ async,     &
    adv_ens_command,              &
@@ -319,7 +319,8 @@ namelist /filter_nml/ async,     &
    min_eps_adap,                 &
    eps_adap_decrease,            &
    norm_increase_tolerance,      &
-   early_stop_criterion
+   early_stop_criterion,         &
+   eakffg_io
 
 !----------------------------------------------------------------
 
@@ -377,11 +378,10 @@ integer :: n_my_state, n_my_obs, n_my_ens, max_ni
 integer :: jj, nobs, Ni
 character :: output_name*50
 real(r8), allocatable :: state_prev_iter(:,:), state_inc(:,:) ! should be ens_size*my_num_var
-real(r8), allocatable :: eps_adap(:)
+real(r8), allocatable :: eps_adap(:), percentage_scalar_norm(:)
 logical  :: pff_update, early_stop
 real(r8):: initial_ker_alpha ! adaptive kernel width
 
-real(r8) :: total_inner_domain_inc(4)
 real(r8) :: inner_tmp_for_save(25,4)
 integer(i8) :: inner_index(50)
 
@@ -719,6 +719,7 @@ endif
 max_ni=50 ! CAUTION ::  max_ni should be larger than Ni and be consistent with inner_domain_mod
 
 allocate(eps_adap(max_iter))
+allocate(percentage_scalar_norm(max_iter))
 allocate(state_prev_iter(ens_size, state_ens_handle%my_num_vars))
 
 allocate(state_ens_handle%state_inc   (ens_size,state_ens_handle%my_num_vars))
@@ -962,8 +963,8 @@ do while ((iter.le.max_iter).AND.(eps_adap(iter).ge.min_eps_adap*1.0_r8).AND.(.n
       
       ! CCHU 2023/02/14: also inquire inner index:
       inner_index = 0
-      call get_var_index_inner_domain(1, inner_index(1:Ni), Ni)
-      print*, inner_index(1:Ni)
+      !call get_var_index_inner_domain(1, inner_index(1:Ni), Ni)
+      !print*, inner_index(1:Ni)
 
       if ((n_my_obs.gt.0).and.(Ni.gt.0)) then ! only do for the pe who owns the obs
          allocate(obs_fwd_op_ens_handle%hx_prior    (ens_size)               )
@@ -1062,31 +1063,46 @@ do while ((iter.le.max_iter).AND.(eps_adap(iter).ge.min_eps_adap*1.0_r8).AND.(.n
    ! Determine if pff_update / early_stop  = .true. or .false. based on obs_handle% scalar_norm
    ! Note that every pe has the norm info
 
+   percentage_scalar_norm(iter) = obs_fwd_op_ens_handle%scalar_norm(iter)/obs_fwd_op_ens_handle%scalar_norm(1)*100
+
    if ( my_task_id().eq.0 ) then
-      write(*,100) 'PFF norm inc is =', &
-                      obs_fwd_op_ens_handle%scalar_norm(iter)/obs_fwd_op_ens_handle%scalar_norm(1)*100,'%'
+      write(*,100) 'PFF norm inc is =', percentage_scalar_norm(iter),'%'
       100 format (A21,F6.2,A2)
    endif      
 
-   if ( iter.eq.1 ) then ! 1st iteration always update
+   if ( iter.eq.1 ) then ! 1st iter always update
+      pff_update = .true.
+      early_stop = .false.
+     
+   elseif ( eakffg_io .and. (iter .le. 2) ) then ! for EAKF as a first-guess, always update 2nd iter
       pff_update = .true. 
       early_stop = .false.
+
    else
-      if ( obs_fwd_op_ens_handle%scalar_norm(iter) .ge. &
-            norm_increase_tolerance*obs_fwd_op_ens_handle%scalar_norm(iter-1) ) then
+      if ( percentage_scalar_norm(iter) .ge. &
+            norm_increase_tolerance + percentage_scalar_norm(iter-1) ) then
          pff_update = .false.
          early_stop = .false.
 
-      elseif ( obs_fwd_op_ens_handle%scalar_norm(iter) .le. & 
-                early_stop_criterion*obs_fwd_op_ens_handle%scalar_norm(1) ) then
+      elseif ( percentage_scalar_norm(iter) .le. early_stop_criterion ) then
          pff_update = .true.
          early_stop = .true.
+
       else
          pff_update = .true.
          early_stop = .false.
+
       endif
    endif
-   
+  
+   ! special case:
+   !if ( obs_fwd_op_ens_handle%scalar_norm(iter) .le. 1e-15 ) then
+   !    pff_update = .false.
+   !    early_stop = .false.
+   !
+   !    if (my_task_id()==0) print*, 'CAUTIOUS: it seems either prior var =0 / learning rate too large... '
+   !endif
+ 
    ! The actual update loop:
    if (pff_update) then
       if (my_task_id().eq.0) then
@@ -1121,18 +1137,21 @@ do while ((iter.le.max_iter).AND.(eps_adap(iter).ge.min_eps_adap*1.0_r8).AND.(.n
 
 END DO ! PFF iteration
 
+
 if (my_task_id()==0) print*, '        finish PFF iteration. Total iteration =', iter-1
 
 
 ! print all dx:
-print*,'before update of the outer domain:'
-print*,'dx =',sum(state_ens_handle%copies(1:ens_size,:),dim=1)/(ens_size*1.0_r8)- &
-              sum(state_ens_handle%state_prior(1:ens_size,:),dim=1)/(ens_size*1.0_r8)
+!print*,'before update of the outer domain:'
+!print*,'dx =',sum(state_ens_handle%copies(1:ens_size,:),dim=1)/(ens_size*1.0_r8)- &
+!              sum(state_ens_handle%state_prior(1:ens_size,:),dim=1)/(ens_size*1.0_r8)
 
 
 ! CCHU: 2023/02/16
 ! final step: update the outer domain:
 ! update_outer = .true.
+
+if ( pff_update ) then 
 
    call get_obs_ens_distrib_state(state_ens_handle, obs_fwd_op_ens_handle, &
            qc_ens_handle, seq, keys, obs_val_index, input_qc_index, &
@@ -1158,23 +1177,10 @@ print*,'dx =',sum(state_ens_handle%copies(1:ens_size,:),dim=1)/(ens_size*1.0_r8)
    state_ens_handle%copies(1:ens_size,:) = state_ens_handle%state_prior(1:ens_size,:) &
                                          + state_ens_handle%state_inc
 
+else
+   state_ens_handle%copies(1:ens_size,:) = state_prev_iter
 
-! print inner domain update:
-!print*,'dx =', sum(state_ens_handle%copies(1:ens_size,inner_index(1:Ni)),dim=1)/(ens_size*1.0_r8) - &
-!               sum(state_ens_handle%state_prior(1:ens_size,inner_index(1:Ni)),dim=1)/(ens_size*1.0_r8)
-
-! print all dx:
-print*,'after updates of the outer domain:'
-print*,'dx =',sum(state_ens_handle%copies(1:ens_size,:),dim=1)/(ens_size*1.0_r8)- &
-              sum(state_ens_handle%state_prior(1:ens_size,:),dim=1)/(ens_size*1.0_r8)
-
-!if(my_task_id()==0) then
-!   total_inner_domain_inc = sum(sum(obs_fwd_op_ens_handle%inner_inc(:,:,1:iter-1),dim=3),dim=1)/ens_size 
-!   print*, ' === '
-!   print*, 'total inner domain inc =', total_inner_domain_inc(1:Ni)
-!   print*, ' --- '
-!endif
-
+endif ! if pff_update = true
 
 
 
@@ -1407,6 +1413,7 @@ endif ! if async == 1
 end do AdvanceTime
 
 ! CCHU: deallocate stuff:
+if (allocated(percentage_scalar_norm)) deallocate(percentage_scalar_norm)
 if (allocated(eps_adap))        deallocate(eps_adap)
 if (allocated(state_prev_iter)) deallocate(state_prev_iter)
 

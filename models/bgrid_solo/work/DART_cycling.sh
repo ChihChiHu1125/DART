@@ -3,47 +3,44 @@
 # a shell script that assimilates obs and then advances the ensemble in time
 # Chih-Chi Hu 2022/12/30
 
-export obs_freq=21600 # obs frequency in seconds (check the folder ./observation for info there)
-export n_da_cycle=60   # how many DA cycles to run (note: 1st DA cycle starts from 0 day 0 sec)
+export obs_freq=4       # observation every nth other obs files (if =1, then use all)
+export n_da_cycle=1440  # the end time index (every ind = 21600 sec)
+export n_start=80       # the start index (every ind = 21600 sec)
 
-export current_dir="/home/chihchi/scratch/Bgrid_project_NEW/DART_EAKF/models/lorenz_96/work"
 export obs_files="observation"
 export obs_space_diag="obs_space_diag"
 export state_space_diag="state_output"
 export log_file="log_files"
 
-
-n_cycle=0 # the counter for DA cycle
-
-for i in $(seq 0 $((n_da_cycle-1)) )
+for i in $(seq $n_start $obs_freq $((n_da_cycle)) )
 do
    # time information for this DA cycle:
-   tt=$(($obs_freq*$i))
+   tt=$((21600*$i))
    ss="$(($tt%86400))"
    dd="$(($tt/86400))"
 
-   tt_prev=$(($obs_freq*($i-1)))
+   tt_prev=$((21600*($i-$obs_freq)))
    ss_prev="$(($tt_prev%86400))"
    dd_prev="$(($tt_prev/86400))"
 
    echo "start doing DA cycle " ${i} "time = "${dd} "day" ${ss} "second."
 
-   if [ "$i" -eq 0 ]; then
+   if [ "$i" -eq $n_start ]; then
 
       # STEP 1: ensemble forecasting and record the obs space prior
-      echo "=== STEP 1: ensemble forecasting and record the obs space prior ==="
+      echo "=== STEP 1: record the first cycle obs space prior ==="
 
       cp input.nml.template input.nml
 
       state_input_file="${state_space_diag}\/filter_prior_${dd}_${ss}.nc"
       state_output_file="${state_space_diag}\/useless.nc"
       stage_to_write="'null'"
-      obs_input_file="${obs_files}\/obs_seq.out_0_0"
-      obs_output_file="${obs_space_diag}\/obs_seq.prior_0_0"
+      obs_input_file="${obs_files}\/obs_seq.out_${dd}_${ss}"
+      obs_output_file="${obs_space_diag}\/obs_seq.prior_${dd}_${ss}"
       evaluate_or_assimilate="evaluate_these_obs_types"
       async="0"                                            # if evaluate, then async = 0
-      init_time_days="0"
-      init_time_seconds="0"
+      init_time_days="${dd}"
+      init_time_seconds="${ss}"
 
       cat > script.sed << EOF
          s/cchu_input_file_here.nc/${state_input_file}/g;
@@ -169,5 +166,4 @@ EOF
 
 done
 
-echo " === !!! All cycling experiments done !!! === "
 

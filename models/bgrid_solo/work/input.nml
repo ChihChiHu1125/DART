@@ -29,13 +29,13 @@
 
 &filter_nml
    single_file_in               = .true.,
-   input_state_files            = 'state_output/filter_post_14_64800.nc'
+   input_state_files            = 'state_output/filter_prior_20_0.nc'
    input_state_file_list        = ''
 
-   stages_to_write  = 'null'
+   stages_to_write  = 'output'
 
    single_file_out              = .true.,
-   output_state_files           = 'state_output/useless.nc'
+   output_state_files           = 'state_output/filter_post_20_0.nc'
    output_state_file_list       = ''
    output_interval              = 10000,
    output_members               = .true.
@@ -50,14 +50,14 @@
    perturbation_amplitude       = 0.08,
    distributed_state            = .true.
 
-   async                        = 0,
+   async                        = 1,
    adv_ens_command              = "../shell_scripts/advance_model.csh",
 
-   obs_sequence_in_name         = "observation/obs_seq.out_14_64800",
-   obs_sequence_out_name        = "obs_space_diag/obs_seq.post_14_64800",
+   obs_sequence_in_name         = "observation/obs_seq.out_20_0_seq",
+   obs_sequence_out_name        = "obs_space_diag/useless",
    num_output_obs_members       = 25,
-   init_time_days               = 14,
-   init_time_seconds            = 64800,
+   init_time_days               = 0,
+   init_time_seconds            = 0,
    first_obs_days               = -1,
    first_obs_seconds            = -1,
    last_obs_days                = -1,
@@ -80,11 +80,12 @@
    output_forward_op_errors     = .false.,
    silence                      = .false.,
 
-   max_iter                    = 60,
-   min_eps_adap                = 0.01,
-   eps_adap_decrease           = 0.8,
-   norm_increase_tolerance     = 1.05,
-   early_stop_criterion        = 0.01,
+   max_iter                    = 80,
+   min_eps_adap                = 1e-4,
+   eps_adap_decrease           = 0.7,
+   norm_increase_tolerance     = 20.0,
+   early_stop_criterion        = 0.0,
+   eakffg_io                   = .true.,
    /
 
 &quality_control_nml
@@ -115,9 +116,17 @@
    localization_diagnostics_file   = 'localization_diagnostics',
    print_every_nth_obs             = 0
 
-   min_kernel_value        = 0.1,
-   eps_type                = 0.25,
    min_eig_ratio           = 1e-10,
+   obs_adj_kind            = 1,
+   learning_rate_fac       = 0.05,
+   max_learning_rate       = 0.5,
+
+   adaptive_ker_io         = .true.,
+   min_kernel_value        = 0.6,
+   fixed_ker_alpha         = 100.0,
+
+   eakffg_io               = .true.,
+   eakffg_inf              = 3.0,
    /
 
 &ensemble_manager_nml
@@ -139,7 +148,7 @@
    /
 
 &obs_kind_nml
-   evaluate_these_obs_types = 'RADIOSONDE_TEMPERATURE',
+   assimilate_these_obs_types = 'RADIOSONDE_TEMPERATURE',
                                 'RADIOSONDE_U_WIND_COMPONENT',
                                 'RADIOSONDE_V_WIND_COMPONENT',
                                 'RADIOSONDE_SURFACE_PRESSURE',
@@ -163,7 +172,7 @@
 &model_nml
    current_time =  0, 0, 0, 0
    override = .false.,
-   dt_atmos = 3600,
+   dt_atmos = 10,
    days     = 10,
    hours    = 0,
    minutes  = 0,

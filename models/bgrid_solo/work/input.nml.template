@@ -80,11 +80,12 @@
    output_forward_op_errors     = .false.,
    silence                      = .false.,
 
-   max_iter                    = 60,
-   min_eps_adap                = 0.01,
-   eps_adap_decrease           = 0.8,
-   norm_increase_tolerance     = 1.05,
-   early_stop_criterion        = 0.01,
+   max_iter                    = 80,
+   min_eps_adap                = 1e-4,
+   eps_adap_decrease           = 0.7,
+   norm_increase_tolerance     = 20.0,
+   early_stop_criterion        = 0.0,
+   eakffg_io                   = .true.,
    /
 
 &quality_control_nml
@@ -115,9 +116,17 @@
    localization_diagnostics_file   = 'localization_diagnostics',
    print_every_nth_obs             = 0
 
-   min_kernel_value        = 0.1,
-   eps_type                = 0.25,
    min_eig_ratio           = 1e-10,
+   obs_adj_kind            = 1,
+   learning_rate_fac       = 0.05,
+   max_learning_rate       = 0.5,
+
+   adaptive_ker_io         = .true.,
+   min_kernel_value        = 0.6,
+   fixed_ker_alpha         = 100.0,
+
+   eakffg_io               = .true.,
+   eakffg_inf              = 3.0,
    /
 
 &ensemble_manager_nml
