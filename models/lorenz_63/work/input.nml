@@ -29,13 +29,13 @@
 
 &filter_nml
    single_file_in               = .true.,
-   input_state_files            = 'ens_free_forecast_day20.nc'
+   input_state_files            = 'filter_input.nc'
    input_state_file_list        = ''
 
-   stages_to_write  = 'preassim', 'analysis', 'output'
+   stages_to_write  = 'forecast','preassim', 'postassim', 'analysis', 'output'
 
    single_file_out              = .true.,
-   output_state_files           = 'ens_DA_output_day20.nc'
+   output_state_files           = 'filter_output.nc'
    output_state_file_list       = ''
    output_interval              = 1,
    output_members               = .true.
@@ -50,24 +50,24 @@
    perturbation_amplitude       = 0.2,
    distributed_state            = .true.
 
-   async                        = 0,
+   async                        = 1,
    adv_ens_command              = "./advance_model.csh",
 
    obs_sequence_in_name         = "obs_seq.out",
    obs_sequence_out_name        = "obs_seq.final",
    num_output_obs_members       = 20,
-   init_time_days               = -1,
-   init_time_seconds            = -1,
+   init_time_days               = 0,
+   init_time_seconds            = 0,
    first_obs_days               = -1,
    first_obs_seconds            = -1,
    last_obs_days                = -1,
    last_obs_seconds             = -1,
 
-   inf_flavor                  = 0,                       0,
+   inf_flavor                  = 0,                       4,
    inf_initial_from_restart    = .false.,                 .false.,
    inf_sd_initial_from_restart = .false.,                 .false.,
    inf_deterministic           = .true.,                  .true.,
-   inf_initial                 = 1.0,                     1.0,
+   inf_initial                 = 1.5,                     0.5,
    inf_lower_bound             = 1.0,                     1.0,
    inf_upper_bound             = 1000000.0,               1000000.0,
    inf_damping                 = 1.0,                     1.0,
@@ -79,6 +79,14 @@
    output_timestamps            = .false.,
    output_forward_op_errors     = .false.,
    silence                      = .false.,
+
+   max_iter                    = 80,
+   min_eps_adap                = 1e-4,
+   eps_adap_decrease           = 0.7,
+   norm_increase_tolerance     = 20.0,
+   early_stop_criterion        = 0.0,
+   eakffg_io                   = .true.,
+
    /
 
 &smoother_nml
@@ -103,6 +111,19 @@
    output_localization_diagnostics = .false.,
    localization_diagnostics_file   = 'localization_diagnostics',
    print_every_nth_obs             = 0
+
+   min_eig_ratio           = 1e-10,
+   obs_adj_kind            = 0,
+   learning_rate_fac       = 0.05,
+   max_learning_rate       = 50,
+
+   adaptive_ker_io         = .true.,
+   min_kernel_value        = 0.6,
+   fixed_ker_alpha         = 10.0,
+
+   eakffg_io               = .true.,
+   eakffg_inf              = 3.0,
+
    /
 
 &cov_cutoff_nml
@@ -130,7 +151,7 @@
    b      = 2.6666666666667,
    deltat = 0.01,
    time_step_days = 0,
-   time_step_seconds = 3600
+   time_step_seconds = 10
    /
 
 &utilities_nml

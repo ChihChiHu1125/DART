@@ -80,7 +80,7 @@
    output_forward_op_errors     = .false.,
    silence                      = .false.,
 
-   max_iter                    = 80,
+   max_iter                    = 30,
    min_eps_adap                = 1e-4,
    eps_adap_decrease           = 0.7,
    norm_increase_tolerance     = 20.0,
@@ -117,15 +117,16 @@
    print_every_nth_obs             = 0
 
    min_eig_ratio           = 1e-10,
-   obs_adj_kind            = 1,
+   obs_adj_kind            = 0,
    learning_rate_fac       = 0.05,
-   max_learning_rate       = 0.5,
+   max_learning_rate       = 0.1,
 
    adaptive_ker_io         = .true.,
-   min_kernel_value        = 0.6,
-   fixed_ker_alpha         = 100.0,
+   min_kernel_value        = 0.05,
+   switch                  = 0,
+   fixed_ker_alpha         = 10.0,
 
-   eakffg_io               = .true.,
+   eakffg_io               = .false.,
    eakffg_inf              = 3.0,
    /
 

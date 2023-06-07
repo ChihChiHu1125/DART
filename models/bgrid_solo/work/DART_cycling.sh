@@ -4,7 +4,7 @@
 # Chih-Chi Hu 2022/12/30
 
 export obs_freq=4       # observation every nth other obs files (if =1, then use all)
-export n_da_cycle=1440  # the end time index (every ind = 21600 sec)
+export n_da_cycle=1436   # the end time index (every ind = 21600 sec)
 export n_start=80       # the start index (every ind = 21600 sec)
 
 export obs_files="observation"

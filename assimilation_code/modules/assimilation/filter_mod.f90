@@ -713,6 +713,37 @@ if (get_stage_to_write('input')) then
 
 endif
 
+! CCHU (2023/04/26)
+! test of adaptive prior inflation
+if (async == 1) then
+
+   if(do_ss_inflate(prior_inflate)) then
+      call trace_message('Before prior inflation damping and prep')
+
+      if (inf_damping(PRIOR_INF) /= 1.0_r8) then
+         call prepare_to_update_copies(state_ens_handle)
+         state_ens_handle%copies(PRIOR_INF_COPY, :) = 1.0_r8 + &
+            inf_damping(PRIOR_INF) * (state_ens_handle%copies(PRIOR_INF_COPY, :)- 1.0_r8)
+      endif
+
+      call filter_ensemble_inflate(state_ens_handle, PRIOR_INF_COPY, prior_inflate, &
+                                ENS_MEAN_COPY)
+
+      ! Recompute the the mean and spread as required for diagnostics
+      call compute_copy_mean_sd(state_ens_handle, 1, ens_size, ENS_MEAN_COPY, ENS_SD_COPY)
+
+      call trace_message('After  prior inflation damping and prep')
+   endif
+
+   ! if relaxation-to-prior-spread inflation, save the prior spread in
+   ! SPARE_PRIOR_SPREAD
+   if ( do_rtps_inflate(post_inflate) ) &
+      call compute_copy_mean_sd(state_ens_handle, 1, ens_size, ENS_MEAN_COPY, &
+                                SPARE_PRIOR_SPREAD)
+
+endif ! endif async == 1
+
+
 ! CCHU (2022/01/20)
 ! sequential DA algorithm for PFF-DART:
 ! allocate stuff for every pe:
@@ -870,28 +901,33 @@ AdvanceTime : do
       endif
    endif
 
-   if(do_ss_inflate(prior_inflate)) then
-      call trace_message('Before prior inflation damping and prep')
+! CCHU: 2023/04/26 a quick test - move this chunk to outside of the AdvanceTime
+! loop (but has to be inside the async == 1 loop so that the inflation is only 
+! applied when doing DA, not applied when generating prior/posterior
+! diagnostics)
 
-      if (inf_damping(PRIOR_INF) /= 1.0_r8) then
-         call prepare_to_update_copies(state_ens_handle)
-         state_ens_handle%copies(PRIOR_INF_COPY, :) = 1.0_r8 + &
-            inf_damping(PRIOR_INF) * (state_ens_handle%copies(PRIOR_INF_COPY, :) - 1.0_r8)
-      endif
+!   if(do_ss_inflate(prior_inflate)) then
+!      call trace_message('Before prior inflation damping and prep')
+!
+!      if (inf_damping(PRIOR_INF) /= 1.0_r8) then
+!         call prepare_to_update_copies(state_ens_handle)
+!         state_ens_handle%copies(PRIOR_INF_COPY, :) = 1.0_r8 + &
+!            inf_damping(PRIOR_INF) * (state_ens_handle%copies(PRIOR_INF_COPY, :) - 1.0_r8)
+!      endif
+!
+!      call filter_ensemble_inflate(state_ens_handle, PRIOR_INF_COPY, prior_inflate, &
+!                                   ENS_MEAN_COPY)
+!
+!      ! Recompute the the mean and spread as required for diagnostics
+!      call compute_copy_mean_sd(state_ens_handle, 1, ens_size, ENS_MEAN_COPY, ENS_SD_COPY)
+!
+!      call trace_message('After  prior inflation damping and prep')
+!   endif
 
-      call filter_ensemble_inflate(state_ens_handle, PRIOR_INF_COPY, prior_inflate, &
-                                   ENS_MEAN_COPY)
-
-      ! Recompute the the mean and spread as required for diagnostics
-      call compute_copy_mean_sd(state_ens_handle, 1, ens_size, ENS_MEAN_COPY, ENS_SD_COPY)
-
-      call trace_message('After  prior inflation damping and prep')
-   endif
-
-   ! if relaxation-to-prior-spread inflation, save the prior spread in SPARE_PRIOR_SPREAD
-   if ( do_rtps_inflate(post_inflate) ) &
-      call compute_copy_mean_sd(state_ens_handle, 1, ens_size, ENS_MEAN_COPY, &
-                                   SPARE_PRIOR_SPREAD)
+!   ! if relaxation-to-prior-spread inflation, save the prior spread in SPARE_PRIOR_SPREAD
+!   if ( do_rtps_inflate(post_inflate) ) &
+!      call compute_copy_mean_sd(state_ens_handle, 1, ens_size, ENS_MEAN_COPY, &
+!                                   SPARE_PRIOR_SPREAD)
 
    call     trace_message('Before computing prior observation values')
    call timestamp_message('Before computing prior observation values')
@@ -906,7 +942,9 @@ AdvanceTime : do
 
 ! CCHU (start of the main PFF-DART below):
 
-if (async==1) then ! to save time, only do below when actually doing DA
+if (async==1) then ! use namelist to control if doing below for DA (e.g., not
+                   ! doing below for generating prior/posterior diagnostics)
+
    ! The start of PFF iteration
    iter = 1
 
@@ -926,6 +964,8 @@ if (async==1) then ! to save time, only do below when actually doing DA
    allocate(obs_fwd_op_ens_handle%scalar_norm (max_iter)        )
 
    !min_eps_adap = 0.1 ! when eps_adap lower than this value, exit the while-loop
+                       ! this parameter is now in the namelist
+
    ! to get into the loop:
    pff_update=.true.
    early_stop=.false.
@@ -950,6 +990,10 @@ do while ((iter.le.max_iter).AND.(eps_adap(iter).ge.min_eps_adap*1.0_r8).AND.(.n
    call output_inner_domain_info(50 + my_task_id())
 
    if ( iter.eq.1 ) then ! save prior information
+
+      ! Note that for current PFF-DART version, we are doing one obs at a time
+      ! so should only deal with one obs in the loop
+      ! and the obs is always stored in the first PE
 
       n_my_obs = obs_fwd_op_ens_handle%my_num_vars
       !print*, '  pe = ', my_task_id(),'#obs = ', n_my_obs
@@ -1066,7 +1110,7 @@ do while ((iter.le.max_iter).AND.(eps_adap(iter).ge.min_eps_adap*1.0_r8).AND.(.n
    percentage_scalar_norm(iter) = obs_fwd_op_ens_handle%scalar_norm(iter)/obs_fwd_op_ens_handle%scalar_norm(1)*100
 
    if ( my_task_id().eq.0 ) then
-      write(*,100) 'PFF norm inc is =', percentage_scalar_norm(iter),'%'
+      !write(*,100) 'PFF norm inc is =', percentage_scalar_norm(iter),'%'
       100 format (A21,F6.2,A2)
    endif      
 
@@ -1106,7 +1150,7 @@ do while ((iter.le.max_iter).AND.(eps_adap(iter).ge.min_eps_adap*1.0_r8).AND.(.n
    ! The actual update loop:
    if (pff_update) then
       if (my_task_id().eq.0) then
-         write(*,101) 'finish iteration ',iter,' , adaptive learning rate = ',eps_adap(iter)
+         !write(*,101) 'finish iteration ',iter,' , adaptive learning rate = ',eps_adap(iter)
          101 format (A21,I3,A26,F6.4)
       endif
       state_prev_iter = state_ens_handle%copies(1:ens_size,:) ! state of previous iteration
@@ -1138,7 +1182,7 @@ do while ((iter.le.max_iter).AND.(eps_adap(iter).ge.min_eps_adap*1.0_r8).AND.(.n
 END DO ! PFF iteration
 
 
-if (my_task_id()==0) print*, '        finish PFF iteration. Total iteration =', iter-1
+!if (my_task_id()==0) print*, '        finish PFF iteration. Total iteration =', iter-1
 
 
 ! print all dx:
@@ -1263,26 +1307,27 @@ endif ! if async == 1
       endif
    endif
 
-   ! This block applies posterior inflation
-
-   if(do_ss_inflate(post_inflate)) then
-
-      call trace_message('Before posterior inflation applied to state')
-
-      if (do_rtps_inflate(post_inflate)) then   
-         call filter_ensemble_inflate(state_ens_handle, POST_INF_COPY, post_inflate, &
-                       ENS_MEAN_COPY, SPARE_PRIOR_SPREAD, ENS_SD_COPY)
-      else
-         call filter_ensemble_inflate(state_ens_handle, POST_INF_COPY, post_inflate, &
-                       ENS_MEAN_COPY)
-      endif
-
-      ! Recompute the mean or the mean and spread as required for diagnostics
-      call compute_copy_mean_sd(state_ens_handle, 1, ens_size, ENS_MEAN_COPY, ENS_SD_COPY)
-
-      call trace_message('After  posterior inflation applied to state')
-
-   endif
+! CCHU (2023/04/27): move this chunck outside the AdvanceTime loop
+!   ! This block applies posterior inflation
+!
+!   if(do_ss_inflate(post_inflate)) then
+!
+!      call trace_message('Before posterior inflation applied to state')
+!
+!      if (do_rtps_inflate(post_inflate)) then   
+!         call filter_ensemble_inflate(state_ens_handle, POST_INF_COPY, post_inflate, &
+!                       ENS_MEAN_COPY, SPARE_PRIOR_SPREAD, ENS_SD_COPY)
+!      else
+!         call filter_ensemble_inflate(state_ens_handle, POST_INF_COPY, post_inflate, &
+!                       ENS_MEAN_COPY)
+!      endif
+!
+!      ! Recompute the mean or the mean and spread as required for diagnostics
+!      call compute_copy_mean_sd(state_ens_handle, 1, ens_size, ENS_MEAN_COPY, ENS_SD_COPY)
+!
+!      call trace_message('After  posterior inflation applied to state')
+!
+!   endif
 
    ! this block recomputes the expected obs values for the obs_seq.final file
 
@@ -1418,6 +1463,32 @@ if (allocated(eps_adap))        deallocate(eps_adap)
 if (allocated(state_prev_iter)) deallocate(state_prev_iter)
 
 call trace_message('End of main filter assimilation loop, starting cleanup', 'filter:', -1)
+
+! CCHU (2023/04/27): move the RTPS chunk to here:
+! This block applies posterior inflation
+
+if (async==1) then
+
+if(do_ss_inflate(post_inflate)) then
+
+   call trace_message('Before posterior inflation applied to state')
+
+   if (do_rtps_inflate(post_inflate)) then
+      call filter_ensemble_inflate(state_ens_handle, POST_INF_COPY, post_inflate, &
+                    ENS_MEAN_COPY, SPARE_PRIOR_SPREAD, ENS_SD_COPY)
+   else
+      call filter_ensemble_inflate(state_ens_handle, POST_INF_COPY, post_inflate, &
+                    ENS_MEAN_COPY)
+   endif
+
+   ! Recompute the mean or the mean and spread as required for diagnostics
+   call compute_copy_mean_sd(state_ens_handle, 1, ens_size, ENS_MEAN_COPY, ENS_SD_COPY)
+
+   call trace_message('After  posterior inflation applied to state')
+
+endif
+
+endif ! async == 1
 
 ! Output the adjusted ensemble. If cycling only the last timestep is writen out
 if (get_stage_to_write('output')) then

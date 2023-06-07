@@ -1,15 +1,25 @@
  obs_sequence
 obs_type_definitions
-           0
+           1
+           1 RAW_STATE_VARIABLE             
   num_copies:            0  num_qc:            0
-  num_obs:            1  max_num_obs:            1
-  first:            1  last:            1
+  num_obs:            2  max_num_obs:            2
+  first:            1  last:            2
  OBS            1
-          -1          -1          -1
+          -1           2          -1
 obdef
 loc1d
-   0.6666666666666666
+   0.1000000000000000
 kind
-          -3
-     0         20
+           1
+     0          0
+   1.0000000000000000     
+ OBS            2
+           1          -1          -1
+obdef
+loc1d
+   0.5000000000000000
+kind
+           1
+     0          0
    1.0000000000000000     

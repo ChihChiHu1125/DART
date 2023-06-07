@@ -197,7 +197,7 @@ integer, parameter :: max_ni = 50
 ! CCHU: namelist for PFF-DART:
 real(r8) :: min_kernel_value, learning_rate_fac, max_learning_rate, min_eig_ratio
 real(r8) :: eakffg_inf, fixed_ker_alpha
-integer  :: obs_adj_kind
+integer  :: obs_adj_kind, switch
 logical  :: eakffg_io, adaptive_ker_io
 
 namelist / assim_tools_nml / filter_kind, cutoff, sort_obs_inc, &
@@ -209,7 +209,7 @@ namelist / assim_tools_nml / filter_kind, cutoff, sort_obs_inc, &
    distribute_mean, close_obs_caching,                                     &
    adjust_obs_impact, obs_impact_filename, allow_any_impact_values,        &
    convert_all_state_verticals_first, convert_all_obs_verticals_first,     &
-   min_eig_ratio, adaptive_ker_io, min_kernel_value, fixed_ker_alpha,      &
+   min_eig_ratio, adaptive_ker_io, min_kernel_value, fixed_ker_alpha, switch,  &
    obs_adj_kind, learning_rate_fac, max_learning_rate, eakffg_io, eakffg_inf
 
 !============================================================================
@@ -1409,7 +1409,7 @@ real(r8) :: norm_nodim_inner_increment(Ni)
 real(r8) :: prior_cov(Ni,Ni), prior_cov_inv(Ni,Ni), input_inverse(Ni,Ni)
 !real(r8) :: kernel(ens_size, ens_size, Ni) ! matrix-valued kernel
 real(r8) :: kernel(ens_size, ens_size) ! scalar-valued kernel
-real(r8) :: argument
+real(r8) :: argument, q_of_x
 real(r8) :: dx(Ni)
 real(r8) :: kernel_width(Ni), prior_mean(Ni)
 real(r8) :: obs_mean, inner_mean(Ni), HT(ens_size, Ni), BHT(ens_size, Ni), HBHT(ens_size)
@@ -1463,15 +1463,17 @@ current_hx_var  = sum((hx_c-current_hx_mean)**2)/(ens_size-1)
 !endif
 
 
-
 ! Get the location informaiton for inner domain:
-do i=1,Ni
-   call get_state_meta_data(inner_index(i), inner_loc(i),inner_var_type)
+! not used rn, but can be very useful information for future developement, for
+! e.g., complicated observations
+
+!do i=1,Ni
+!   call get_state_meta_data(inner_index(i), inner_loc(i),inner_var_type)
    !IF (my_task_id()==0) print*, 'inner index = ', inner_index
    !if (my_task_id()==0) print*, 'inner domain var ',i,' var type =', inner_var_type
    !if (my_task_id()==0 .and. iter ==1 ) print*, '  location lat  = ', inner_loc(i)%lat/3.1415*180., ' lon =',inner_loc(i)%lon/3.1415*180.
    !if (my_task_id()==0) print*, '          height = ', inner_loc(i)%vloc,'( vert = ', inner_loc(i)%which_vert,' )'
-enddo
+!enddo
 
 ! caluclate the prior mean, prior covariance matrix
 prior_mean = sum(inner_pmatrix,dim=1)/ens_size
@@ -1511,18 +1513,10 @@ elseif ( obs_adj_kind == 1 ) then
    ! CAUTION: need to manually check if the adjoint is correct!!
    do i=1,ens_size
       do j=1,4
-   !      HT(i,j) = 0.25* hx_c(i)/400
          HT(i,j) = 0.25* hx_c(i)/100
       enddo
    enddo
 
-   !   do j=5,8
-   !      HT(i,j) = 0.25*(inner_cmatrix(i,5)+inner_cmatrix(i,6)+ &
-   !                      inner_cmatrix(i,7)+inner_cmatrix(i,8))/sqrt(ens(i))
-   !      HT(i,j) =  0.5*(inner_cmatrix(i,5)+inner_cmatrix(i,6)+ &
-   !                      inner_cmatrix(i,7)+inner_cmatrix(i,8))
-   !   enddo
-   !enddo
 
 elseif ( obs_adj_kind == 2 ) then
    ! ----- METHOD 2: kernel approx: -----
@@ -1530,14 +1524,14 @@ elseif ( obs_adj_kind == 2 ) then
 
 endif
 
-if ((iter==1).and.(my_task_id()==0)) then
+!if ((iter==1).and.(my_task_id()==0)) then
    !print*, 'x (1st)=', inner_cmatrix(:,1)
    !print*, 'x (2nd)=', inner_cmatrix(:,2)
    !print*, 'x (3rd)=', inner_cmatrix(:,3)
    !print*, 'x (4th)=', inner_cmatrix(:,4)
    !print*, 'H(x) =', hx_c(1:ens_size)
-   print*,'HT=', HT(1,:)
-endif
+!   print*,'HT=', HT(1,:)
+!endif
 
 ! ====== END OF estimate the adjoint of the observation operator ======
 
@@ -1545,7 +1539,29 @@ endif
 ! in the following, calculate the gradient of the posterior pdf
 ! Decompose the B* (log posterior) = B*log likelihood (like_pdf) + B*log prior (prir_pdf)
 do i=1,ens_size
-   like_pdf(i,:) = matmul( prior_cov, HT(i,:)*(obs-hx_c(i))/obs_var)
+
+    like_pdf(i,:) = matmul( prior_cov, HT(i,:)*(obs-hx_c(i))/obs_var)
+
+!  the exact solution for the state-dependent obs error:
+!  for expslp5 (situation dependent error)
+!   q_of_x = ( 0.25_r8 * hx_c(i) )
+
+!   like_pdf(i,:) = matmul( prior_cov, HT(i,:)*(obs-hx_c(i))/(q_of_x)**2)
+
+!   like_pdf(i,:) = matmul( prior_cov, HT(i,:)*      &
+!                   ( (obs-hx_c(i))/(q_of_x)**2 +    &
+!                     0.25_r8*( (obs-hx_c(i))**2 - q_of_x**2 )/q_of_x**3 ) )
+
+!  for slp2 (situation dependent error)
+!   q_of_x = ( hx_c(i) - 97000.0_r8 )/ 10.0_r8
+!
+!   like_pdf(i,:) = matmul( prior_cov, HT(i,:)*     &
+!                   ( (obs-hx_c(i))/q_of_x**2 ))
+
+!   like_pdf(i,:) = matmul( prior_cov, HT(i,:)*     &
+!                   ( (obs-hx_c(i))/(q_of_x)**2 +   &
+!                      1.0_r8/1000.0_r8*( (obs-hx_c(i))**2 - q_of_x**2 )/q_of_x**3 ) )
+
    prir_pdf(i,:) = -(inner_cmatrix(i,:)-prior_mean(:))
 enddo
 
@@ -1566,10 +1582,14 @@ if ( adaptive_ker_io ) then
    !   min_kernel_value = 0.1 ! set the minimum kernel value
       ker_alpha = -maxval(particle_dis)/log(min_kernel_value)
       initial_alpha = ker_alpha
-   elseif ( current_hx_var .le. post_hx_var ) then
-      if (my_task_id()==0) print*, 'caution: kernel values are set to 1'
+   !elseif ( current_hx_var .le. post_hx_var ) then
+   !   if (my_task_id()==0) print*, 'caution: kernel values are set to 1'
+   !   ker_alpha = -maxval(particle_dis)/log(0.999999)
+   !   !ker_alpha = initial_alpha
+   endif
+
+   if ( iter.le. switch ) then
       ker_alpha = -maxval(particle_dis)/log(0.999999)
-      !ker_alpha = initial_alpha
    else
       ker_alpha = initial_alpha
    endif
@@ -1579,9 +1599,10 @@ else
 
 endif
 
-if ((my_task_id().eq.0).and.(iter.eq.1)) then
-   print*, 'kernel alpha =',ker_alpha
-endif
+!if ((my_task_id().eq.0).and.(iter.eq.1)) then
+!if (my_task_id()==0) then
+!   print*, 'iter = ', iter, 'kernel alpha =',ker_alpha
+!endif
 
 ! ====== END OF Adaptive kernel width algorithm ======
 
@@ -1597,9 +1618,10 @@ do i=1,ens_size
    enddo
 enddo
 
-if ((my_task_id().eq.0).and.(iter.eq.1)) then
-   print*, 'minimum kernel = ', minval(kernel)
-endif
+!if ((my_task_id().eq.0).and.(iter.eq.1)) then
+!if (my_task_id()==0) then
+!   print*, 'iter = ', iter, 'minimum kernel = ', minval(kernel)
+!endif
 
 
 ! ====== Adaptive learning rate for eps_assim ======
@@ -1669,7 +1691,7 @@ enddo
 !eps_assim = min(1.0_r8/(sum(norm_Binv_inner_increment)/Ni)*learning_rate_fac, max_learning_rate)
 eps_assim = min(1.0_r8/(norm2(norm_nodim_inner_increment/sqrt(Ni*1.0_r8)))*learning_rate_fac, max_learning_rate)
 
-if (my_task_id()==0) print*, 1.0_r8/(norm2(norm_nodim_inner_increment/sqrt(Ni*1.0_r8)))*learning_rate_fac
+!if (my_task_id()==0) print*, 1.0_r8/(norm2(norm_nodim_inner_increment/sqrt(Ni*1.0_r8)))*learning_rate_fac
 
 inner_increment = eps_assim*inner_increment
 
@@ -1726,12 +1748,12 @@ endif
 ! print all the diagnostics
 
 !if (iter .eq. max_iter) then
-if (my_task_id()==0) print*, ' '
-if (my_task_id()==0) print*, '      obs value =', obs
-if (my_task_id()==0) print*, '      eps_assim = ',eps_assim
+!if (my_task_id()==0) print*, ' '
+!if (my_task_id()==0) print*, '      obs value =', obs
+!if (my_task_id()==0) print*, '      eps_assim = ',eps_assim
 !if (my_task_id()==0) print*, '      current std = ', sqrt(current_hx_var), 'posterior std =', sqrt(post_hx_var)
-if (my_task_id()==0) print*, '      current mean = ', current_hx_mean, 'posterior mean =', post_hx_mean
-if (my_task_id()==0) print*, ' '
+!if (my_task_id()==0) print*, '      current mean = ', current_hx_mean, 'posterior mean =', post_hx_mean
+!if (my_task_id()==0) print*, ' '
 
 !endif
 

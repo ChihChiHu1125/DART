@@ -29,13 +29,13 @@
 
 &filter_nml
    single_file_in               = .true.,
-   input_state_files            = 'state_output/filter_prior_20_0.nc'
+   input_state_files            = 'state_output/filter_post_359_0.nc'
    input_state_file_list        = ''
 
-   stages_to_write  = 'output'
+   stages_to_write  = 'null'
 
    single_file_out              = .true.,
-   output_state_files           = 'state_output/filter_post_20_0.nc'
+   output_state_files           = 'state_output/useless.nc'
    output_state_file_list       = ''
    output_interval              = 10000,
    output_members               = .true.
@@ -50,13 +50,13 @@
    perturbation_amplitude       = 0.08,
    distributed_state            = .true.
 
-   async                        = 1,
+   async                        = 0,
    adv_ens_command              = "../shell_scripts/advance_model.csh",
 
-   obs_sequence_in_name         = "observation/obs_seq.out_20_0_seq",
-   obs_sequence_out_name        = "obs_space_diag/useless",
+   obs_sequence_in_name         = "observation/obs_seq.out_359_0",
+   obs_sequence_out_name        = "obs_space_diag/obs_seq.post_359_0",
    num_output_obs_members       = 25,
-   init_time_days               = 0,
+   init_time_days               = 359,
    init_time_seconds            = 0,
    first_obs_days               = -1,
    first_obs_seconds            = -1,
@@ -80,7 +80,7 @@
    output_forward_op_errors     = .false.,
    silence                      = .false.,
 
-   max_iter                    = 80,
+   max_iter                    = 30,
    min_eps_adap                = 1e-4,
    eps_adap_decrease           = 0.7,
    norm_increase_tolerance     = 20.0,
@@ -117,15 +117,16 @@
    print_every_nth_obs             = 0
 
    min_eig_ratio           = 1e-10,
-   obs_adj_kind            = 1,
+   obs_adj_kind            = 0,
    learning_rate_fac       = 0.05,
-   max_learning_rate       = 0.5,
+   max_learning_rate       = 0.1,
 
    adaptive_ker_io         = .true.,
-   min_kernel_value        = 0.6,
-   fixed_ker_alpha         = 100.0,
+   min_kernel_value        = 0.05,
+   switch                  = 0,
+   fixed_ker_alpha         = 10.0,
 
-   eakffg_io               = .true.,
+   eakffg_io               = .false.,
    eakffg_inf              = 3.0,
    /
 
@@ -148,7 +149,7 @@
    /
 
 &obs_kind_nml
-   assimilate_these_obs_types = 'RADIOSONDE_TEMPERATURE',
+   evaluate_these_obs_types = 'RADIOSONDE_TEMPERATURE',
                                 'RADIOSONDE_U_WIND_COMPONENT',
                                 'RADIOSONDE_V_WIND_COMPONENT',
                                 'RADIOSONDE_SURFACE_PRESSURE',
@@ -172,7 +173,7 @@
 &model_nml
    current_time =  0, 0, 0, 0
    override = .false.,
-   dt_atmos = 10,
+   dt_atmos = 3600,
    days     = 10,
    hours    = 0,
    minutes  = 0,
