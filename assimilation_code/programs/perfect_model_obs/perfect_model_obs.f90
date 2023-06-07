@@ -546,7 +546,13 @@ AdvanceTime: do
 
          ! CCHU (2023/04/20): for situation-dependent error variance
          !                    reset the observation error variance:
-         call set_obs_def_error_variance(obs_def, (0.25*true_obs(1))**2 )
+         
+         ! for expslp3,4,5 observation:
+         !call set_obs_def_error_variance(obs_def, (0.25*true_obs(1))**2 )
+
+         ! for slp2 observation
+         call set_obs_def_error_variance(obs_def, &
+                ( (true_obs(1)-97000)/10 )**2  )
 
          !print*, get_obs_def_error_variance(obs_def)
 

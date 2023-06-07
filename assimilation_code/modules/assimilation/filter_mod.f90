@@ -684,6 +684,34 @@ if (get_stage_to_write('input')) then
 
 endif
 
+! CCHU (2023/05/01) move from inside the AdvanceTime loop:
+if (async == 1) then
+
+if(do_ss_inflate(prior_inflate)) then
+   call trace_message('Before prior inflation damping and prep')
+
+   if (inf_damping(PRIOR_INF) /= 1.0_r8) then
+      call prepare_to_update_copies(state_ens_handle)
+      state_ens_handle%copies(PRIOR_INF_COPY, :) = 1.0_r8 + &
+         inf_damping(PRIOR_INF) * (state_ens_handle%copies(PRIOR_INF_COPY, :)- 1.0_r8)
+   endif
+
+   call filter_ensemble_inflate(state_ens_handle, PRIOR_INF_COPY, prior_inflate, &
+                                ENS_MEAN_COPY)
+
+   ! Recompute the the mean and spread as required for diagnostics
+   call compute_copy_mean_sd(state_ens_handle, 1, ens_size, ENS_MEAN_COPY, ENS_SD_COPY)
+
+   call trace_message('After  prior inflation damping and prep')
+endif
+
+! if relaxation-to-prior-spread inflation, save the prior spread in
+! SPARE_PRIOR_SPREAD
+if ( do_rtps_inflate(post_inflate) ) &
+   call compute_copy_mean_sd(state_ens_handle, 1, ens_size, ENS_MEAN_COPY, &
+                                SPARE_PRIOR_SPREAD)
+
+endif ! async == 1
 
 AdvanceTime : do
    call trace_message('Top of main advance time loop')
@@ -830,28 +858,29 @@ AdvanceTime : do
       endif
    endif
 
-   if(do_ss_inflate(prior_inflate)) then
-      call trace_message('Before prior inflation damping and prep')
-
-      if (inf_damping(PRIOR_INF) /= 1.0_r8) then
-         call prepare_to_update_copies(state_ens_handle)
-         state_ens_handle%copies(PRIOR_INF_COPY, :) = 1.0_r8 + &
-            inf_damping(PRIOR_INF) * (state_ens_handle%copies(PRIOR_INF_COPY, :) - 1.0_r8)
-      endif
-
-      call filter_ensemble_inflate(state_ens_handle, PRIOR_INF_COPY, prior_inflate, &
-                                   ENS_MEAN_COPY)
-
-      ! Recompute the the mean and spread as required for diagnostics
-      call compute_copy_mean_sd(state_ens_handle, 1, ens_size, ENS_MEAN_COPY, ENS_SD_COPY)
-
-      call trace_message('After  prior inflation damping and prep')
-   endif
-
-   ! if relaxation-to-prior-spread inflation, save the prior spread in SPARE_PRIOR_SPREAD
-   if ( do_rtps_inflate(post_inflate) ) &
-      call compute_copy_mean_sd(state_ens_handle, 1, ens_size, ENS_MEAN_COPY, &
-                                   SPARE_PRIOR_SPREAD)
+! CCHU (2023/05/01) move this block outside the AdvanceTime loop
+!   if(do_ss_inflate(prior_inflate)) then
+!      call trace_message('Before prior inflation damping and prep')
+!
+!      if (inf_damping(PRIOR_INF) /= 1.0_r8) then
+!         call prepare_to_update_copies(state_ens_handle)
+!         state_ens_handle%copies(PRIOR_INF_COPY, :) = 1.0_r8 + &
+!            inf_damping(PRIOR_INF) * (state_ens_handle%copies(PRIOR_INF_COPY, :) - 1.0_r8)
+!      endif
+!
+!      call filter_ensemble_inflate(state_ens_handle, PRIOR_INF_COPY, prior_inflate, &
+!                                   ENS_MEAN_COPY)
+!
+!      ! Recompute the the mean and spread as required for diagnostics
+!      call compute_copy_mean_sd(state_ens_handle, 1, ens_size, ENS_MEAN_COPY, ENS_SD_COPY)
+!
+!      call trace_message('After  prior inflation damping and prep')
+!   endif
+!
+!   ! if relaxation-to-prior-spread inflation, save the prior spread in SPARE_PRIOR_SPREAD
+!   if ( do_rtps_inflate(post_inflate) ) &
+!      call compute_copy_mean_sd(state_ens_handle, 1, ens_size, ENS_MEAN_COPY, &
+!                                   SPARE_PRIOR_SPREAD)
 
    call     trace_message('Before computing prior observation values')
    call timestamp_message('Before computing prior observation values')
@@ -990,26 +1019,27 @@ AdvanceTime : do
       endif
    endif
 
-   ! This block applies posterior inflation
-
-   if(do_ss_inflate(post_inflate)) then
-
-      call trace_message('Before posterior inflation applied to state')
-
-      if (do_rtps_inflate(post_inflate)) then   
-         call filter_ensemble_inflate(state_ens_handle, POST_INF_COPY, post_inflate, &
-                       ENS_MEAN_COPY, SPARE_PRIOR_SPREAD, ENS_SD_COPY)
-      else
-         call filter_ensemble_inflate(state_ens_handle, POST_INF_COPY, post_inflate, &
-                       ENS_MEAN_COPY)
-      endif
-
-      ! Recompute the mean or the mean and spread as required for diagnostics
-      call compute_copy_mean_sd(state_ens_handle, 1, ens_size, ENS_MEAN_COPY, ENS_SD_COPY)
-
-      call trace_message('After  posterior inflation applied to state')
-
-   endif
+! CCHU (2023/05/01) move this block outside the AdvanceTime loop:
+!   ! This block applies posterior inflation
+!
+!   if(do_ss_inflate(post_inflate)) then
+!
+!      call trace_message('Before posterior inflation applied to state')
+!
+!      if (do_rtps_inflate(post_inflate)) then   
+!         call filter_ensemble_inflate(state_ens_handle, POST_INF_COPY, post_inflate, &
+!                       ENS_MEAN_COPY, SPARE_PRIOR_SPREAD, ENS_SD_COPY)
+!      else
+!         call filter_ensemble_inflate(state_ens_handle, POST_INF_COPY, post_inflate, &
+!                       ENS_MEAN_COPY)
+!      endif
+!
+!      ! Recompute the mean or the mean and spread as required for diagnostics
+!      call compute_copy_mean_sd(state_ens_handle, 1, ens_size, ENS_MEAN_COPY, ENS_SD_COPY)
+!
+!      call trace_message('After  posterior inflation applied to state')
+!
+!   endif
 
    ! this block recomputes the expected obs values for the obs_seq.final file
 
@@ -1140,6 +1170,33 @@ AdvanceTime : do
 end do AdvanceTime
 
 call trace_message('End of main filter assimilation loop, starting cleanup', 'filter:', -1)
+
+! CCHU (2023/05/01) moved from inside the AdvanceTime loop:
+
+! This block applies posterior inflation
+
+if (async == 1) then
+
+if(do_ss_inflate(post_inflate)) then
+
+   call trace_message('Before posterior inflation applied to state')
+
+   if (do_rtps_inflate(post_inflate)) then
+      call filter_ensemble_inflate(state_ens_handle, POST_INF_COPY, post_inflate, &
+                    ENS_MEAN_COPY, SPARE_PRIOR_SPREAD, ENS_SD_COPY)
+   else
+      call filter_ensemble_inflate(state_ens_handle, POST_INF_COPY, post_inflate, &
+                    ENS_MEAN_COPY)
+   endif
+
+   ! Recompute the mean or the mean and spread as required for diagnostics
+   call compute_copy_mean_sd(state_ens_handle, 1, ens_size, ENS_MEAN_COPY, ENS_SD_COPY)
+
+   call trace_message('After  posterior inflation applied to state')
+
+endif
+
+endif ! if async == 1
 
 ! Output the adjusted ensemble. If cycling only the last timestep is writen out
 if (get_stage_to_write('output')) then

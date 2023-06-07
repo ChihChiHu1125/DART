@@ -371,6 +371,8 @@ logical :: local_varying_ss_inflate
 logical :: local_ss_inflate
 logical :: local_obs_inflate
 
+integer :: ii
+
 ! allocate rather than dump all this on the stack
 allocate(close_obs_dist(     obs_ens_handle%my_num_vars), &
          close_obs_ind(      obs_ens_handle%my_num_vars), &
@@ -567,8 +569,9 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
    call get_obs_from_key(obs_seq, keys(i), observation)
    call get_obs_def(observation, obs_def)
    base_obs_loc = get_obs_def_location(obs_def)
+
    !CCHU 2023/03/24
-   !obs_err_var = get_obs_def_error_variance(obs_def)
+   obs_err_var = get_obs_def_error_variance(obs_def)
    base_obs_type = get_obs_def_type_of_obs(obs_def)
    if (base_obs_type > 0) then
       base_obs_kind = get_quantity_for_type_of_obs(base_obs_type)
@@ -578,9 +581,22 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
    ! Get the value of the observation
    call get_obs_values(observation, obs, obs_val_index)
 
+   ! for expslp4,5
    !obs_err_var = (0.25*obs(1))**2
-   obs_err_var = (0.25*obs(1))**2
+   
+   ! for slp2:
+   !obs_err_var = ( (obs(1) - 97000_r8)/10.0_r8 )**2
 
+   ! Craig's solution (Bishop 2019)
+   !obs_prior = obs_ens_handle%copies(1:ens_size, owners_index)
+   !obs_err_var = 0.0_r8
+   !do ii = 1, ens_size
+   !   obs_err_var = obs_err_var + &
+   !        ( (obs_prior(ii) - 97000_r8)/10.0_r8 )**2 / (ens_size*1.0_r8)
+   !enddo
+
+   !if (my_task_id()==0) print*, obs_prior
+   !if (my_task_id()==0) print*, obs_err_var
 
    ! Find out who has this observation and where it is
    call get_var_owner_index(ens_handle, int(i,i8), owner, owners_index)
@@ -841,7 +857,8 @@ subroutine obs_increment(ens_in, ens_size, obs, obs_var, obs_inc, &
 ! observation space inflation values
 
 integer,                     intent(in)    :: ens_size
-real(r8),                    intent(in)    :: ens_in(ens_size), obs, obs_var
+real(r8),                    intent(in)    :: ens_in(ens_size), obs
+real(r8),                    intent(inout) :: obs_var
 real(r8),                    intent(out)   :: obs_inc(ens_size)
 type(adaptive_inflate_type), intent(inout) :: inflate
 real(r8),                    intent(inout) :: my_cov_inflate, my_cov_inflate_sd
@@ -966,11 +983,28 @@ subroutine obs_increment_eakf(ens, ens_size, prior_mean, prior_var, obs, obs_var
 ! EAKF version of obs increment
 
 integer,  intent(in)  :: ens_size
-real(r8), intent(in)  :: ens(ens_size), prior_mean, prior_var, obs, obs_var
+real(r8), intent(in)  :: ens(ens_size), prior_mean, prior_var, obs
+real(r8), intent(inout) :: obs_var
 real(r8), intent(out) :: obs_inc(ens_size)
 real(r8), intent(out) :: a
 
 real(r8) :: new_mean, var_ratio
+integer :: ii
+
+! CCHU (2023/04/30)
+! Craig's solution for state-dependent obs error (Craig 2019)
+
+!if (my_task_id()==0) print*, 'orig obs var = ', obs_var
+
+!obs_var = 0.0_r8
+!do ii = 1, ens_size
+   ! CCHU: for slp2
+   !obs_var = obs_var + ( (ens(ii) - 97000_r8)/10.0_r8 )**2 / (ens_size*1.0_r8)
+
+   ! CCHU: for expslp5:
+   !obs_var = obs_var + ( (0.25*ens(ii))**2 )/(ens_size*1.0_r8)
+   !if (my_task_id()==0) print*, ((ens(ii) - 97000_r8)/10.0_r8) **2 
+!enddo
 
 ! Compute the new mean
 var_ratio = obs_var / (prior_var + obs_var)
@@ -979,6 +1013,7 @@ new_mean  = var_ratio * (prior_mean  + prior_var*obs / obs_var)
 ! Compute sd ratio and shift ensemble
 a = sqrt(var_ratio)
 obs_inc = a * (ens - prior_mean) + new_mean - ens
+
 
 end subroutine obs_increment_eakf
 
