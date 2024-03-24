@@ -29,13 +29,13 @@
 
 &filter_nml
    single_file_in               = .true.,
-   input_state_files            = 'state_output/filter_post_21_0.nc'
+   input_state_files            = 'state_output/filter_prior_21_0.nc'
    input_state_file_list        = ''
 
-   stages_to_write  = 'null'
+   stages_to_write  = 'output'
 
    single_file_out              = .true.,
-   output_state_files           = 'state_output/useless.nc'
+   output_state_files           = 'state_output/filter_post_21_0.nc'
    output_state_file_list       = ''
    output_interval              = 10000,
    output_members               = .true.
@@ -50,13 +50,13 @@
    perturbation_amplitude       = 0.08,
    distributed_state            = .true.
 
-   async                        = 0,
+   async                        = 1,
    adv_ens_command              = "../shell_scripts/advance_model.csh",
 
-   obs_sequence_in_name         = "observation/obs_seq.out_21_0",
-   obs_sequence_out_name        = "obs_space_diag/obs_seq.post_21_0",
+   obs_sequence_in_name         = "observation/obs_seq.out_21_0_seq",
+   obs_sequence_out_name        = "obs_space_diag/useless",
    num_output_obs_members       = 25,
-   init_time_days               = 21,
+   init_time_days               = 0,
    init_time_seconds            = 0,
    first_obs_days               = -1,
    first_obs_seconds            = -1,
@@ -149,7 +149,7 @@
    /
 
 &obs_kind_nml
-   evaluate_these_obs_types = 'RADIOSONDE_TEMPERATURE',
+   assimilate_these_obs_types = 'RADIOSONDE_TEMPERATURE',
                                 'RADIOSONDE_U_WIND_COMPONENT',
                                 'RADIOSONDE_V_WIND_COMPONENT',
                                 'RADIOSONDE_SURFACE_PRESSURE',
@@ -173,7 +173,7 @@
 &model_nml
    current_time =  0, 0, 0, 0
    override = .false.,
-   dt_atmos = 3600,
+   dt_atmos = 10,
    days     = 10,
    hours    = 0,
    minutes  = 0,
