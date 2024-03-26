@@ -639,6 +639,7 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
    ! CCHU 2023/03/24
    obs_err_var = get_obs_def_error_variance(obs_def)
    base_obs_type = get_obs_def_type_of_obs(obs_def)
+
    if (base_obs_type > 0) then
       base_obs_kind = get_quantity_for_type_of_obs(base_obs_type)
    else
@@ -691,6 +692,7 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
 
          hx_p = obs_ens_handle%hx_prior(1:ens_size)
          hx_c = obs_ens_handle%copies(1:ens_size, owners_index)
+
 
          ! Note that these are before DA starts, so can be different from current obs_prior
          orig_obs_prior_mean = obs_ens_handle%copies(OBS_PRIOR_MEAN_START: &
@@ -1511,12 +1513,27 @@ if ( obs_adj_kind == 0 ) then
 elseif ( obs_adj_kind == 1 ) then
    ! the analytical adjoint for exponential H(x)
    ! CAUTION: need to manually check if the adjoint is correct!!
-   do i=1,ens_size
-      do j=1,4
-         HT(i,j) = 0.25* hx_c(i)/100
-      enddo
-   enddo
 
+   select case (base_obs_type)
+
+   case(40)
+      if ( my_task_id()==0 .and. iter == 1) then
+         print*, '(warning!) only for exponential observations, use hard-coded adjoint'
+      endif
+
+      do i=1,ens_size
+         do j=1,4
+            HT(i,j) = 0.25* hx_c(i)/100
+         enddo
+      enddo
+
+   case default
+      if ( my_task_id()==0 .and. iter == 1) then
+         print*, 'no analytical adjoint available, use option 0'
+      endif
+
+      call HT_regress(HT, input_x, hx_c, ens_size, Ni, min_eig_ratio)
+   end select
 
 elseif ( obs_adj_kind == 2 ) then
    ! ----- METHOD 2: kernel approx: -----
