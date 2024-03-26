@@ -122,7 +122,7 @@
    max_learning_rate       = 0.1,
 
    adaptive_ker_io         = .true.,
-   min_kernel_value        = 0.10,
+   min_kernel_value        = 0.1,
    switch                  = 0,
    fixed_ker_alpha         = 10.0,
 
