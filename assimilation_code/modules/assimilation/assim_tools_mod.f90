@@ -424,10 +424,6 @@ real(r8) :: scalar_norm_tmp
 integer :: ii, jj, inner,cc, ss
 integer :: n_total_obs ! total number of global obs
 character :: output_name*50
-real(r8) :: ccwu, ccwu_tmp, ccwu_add
-integer  :: cwui, cchu
-integer :: ccwu1_ct, ccwu2_ct, n_my_state
-real(r8), dimension(3) :: ccwu_array
 
 
 ! allocate rather than dump all this on the stack
@@ -609,6 +605,7 @@ allow_missing_in_state = get_missing_ok_status()
 ens_handle%state_inc(:,:) = 0 ! initialzation
 
 ! Loop through all the (global) observations sequentially
+! (In the PFF_DART: there is only one observation)
 
 SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
 
@@ -628,10 +625,10 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
       endif
    endif
 
-   ! CCHU: 2022/01/18:
-   ! However, inner domain info is ONLY stored in the pe which owns the obs, so need to broadcast
-
    ! Every pe has information about the global obs sequence
+
+   ! (CCHU )However,note that inner domain variables are ONLY stored in the PE which owns the obs (which is the 1st PE)
+   ! this information also needs to broadcast to other PEs for the update
    call get_obs_from_key(obs_seq, keys(i), observation)
    call get_obs_def(observation, obs_def)
    base_obs_loc = get_obs_def_location(obs_def)
@@ -648,7 +645,7 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
    ! Get the value of the observation
    call get_obs_values(observation, obs, obs_val_index)
 
-   ! should be different for different obs operator
+   ! (CCHU) You can do state-dependent obs error variance like:
    !obs_err_var = (0.25*obs(1))**2
 
    ! Find out who has this observation and where it is
@@ -710,7 +707,7 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
          inner_index = 0
          call get_var_index_inner_domain(owners_index, inner_index(1:Ni), Ni)
 
-         ! It is easier to broadcast real numbers than integer, so change the
+         ! (CCHU) It is technically (?) easier (?) to broadcast real numbers than integer, so change the
          ! format of the integer to real number (r8):
          inner_index_r8 = 1.0_r8*inner_index
          Ni_r8          = 1.0_r8*Ni
@@ -822,13 +819,14 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
    allocate(inner_increment     (ens_size, Ni) )
    allocate(norm_inner_increment(Ni)           )
 
+   ! outer_update = .false. => the 1st step in the two-step update algorithm
    if (.not. outer_update) then
 
       ! Compute observation space increments for each group
       do group = 1, num_groups
          grp_bot = grp_beg(group); grp_top = grp_end(group)
 
-         ! CCHU:: call the filter (PFF) here:
+         ! (CCHU) the core-PFF algorithm is called in obs_increment below:
 
          ! initial value of kernel alpha (a random number, doesn't matter)
          initial_alpha = initial_ker_alpha
@@ -870,8 +868,8 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
          if (obs_prior_var(group) < 0.0_r8) obs_prior_var(group) = 0.0_r8
       end do
    
-      ! CCHU 2023/02/14:
-      ! update the inner domain 
+      ! (CCHU) save the inner domain increment (i.e., particle flow)
+      ! this will be saved in state_ens_handle and passed back to filter_mod.f90 
 
       do inner = 1, Ni
          call get_var_owner_index(ens_handle, inner_index(inner), owner, owners_index)
@@ -882,6 +880,7 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
          endif
       enddo
 
+      ! if .not. outer_update, then skip most of the following (and go back to filter_mod)
       cycle SEQUENTIAL_OBS
 
    endif ! if .not. outer_update
@@ -930,9 +929,10 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
    ! CCHU: test the radius of influence
    ! write(*,*) 'close state ind = ', close_state_ind(1:num_close_states)
 
+   ! (CCHU) The following block implements the 2nd step in two-step algorithm
+   ! this will be implemented only when outer_update = .true.
    ! Loop through to update each of my state variables that are close to obs location (current)
    ! inner domain location"s" (need to write the code for this in the future)
-
 
    ! === Binv * inner domain increment ===
    allocate(prior_cov           (Ni,Ni)       )
@@ -942,11 +942,13 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
    allocate(inner_p_mean        (Ni)          ) 
  
    ! calculate the prior covariance (for inner domain)
-   
+  
+   ! inner domain variables prior mean 
    do inner = 1, Ni
       inner_p_mean(inner) = sum(inner_p(ens_size*(inner-1)+1: ens_size*inner))/ens_size
    enddo
 
+   ! inner domain variables prior covariance matrix
    do ii=1,Ni
       do jj=1,Ni
          if (jj.ge.ii) then
@@ -965,13 +967,13 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
    ! use SVD to calculate the inverse of prior covariance (of inner domain)
    call svd_pseudo_inverse(input_inverse,prior_cov_inv,Ni,Ni,min_eig_ratio)
  
-   ! Binv_increment:
+   ! inner domain increment = inner domain current values - inner domain prior values
    do inner = 1, Ni
       inner_increment(:,inner) = inner_c(ens_size*(inner-1)+1: ens_size*inner) - &
                                  inner_p(ens_size*(inner-1)+1: ens_size*inner)
    enddo
 
-   ! print out the inner domain increment!
+   ! print out the inner domain/obs prior and posterior information:
    if (my_task_id()==0) print*, ' '
    if (my_task_id()==0) print*, '       obs value =', obs
    if (my_task_id()==0) print*, '       H(x) prior mean =', sum(hx_p)/(ens_size*1.0_r8)
@@ -979,6 +981,7 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
    if (my_task_id()==0) print*, '       |inner inc| =', sum(abs(inner_increment),dim=1)/(ens_size*1.0_r8)
 !   if (my_task_id()==0) print*, 'inner inc =',  sum(inner_increment(1:3,:),dim=2)/4
 
+   ! B^{-1} * (inner domain increment)
    Binv_inner_increment = matmul(inner_increment, prior_cov_inv)
 
 
@@ -997,11 +1000,6 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
       do cc = 1, ens_size
          obs_prior_var = obs_prior_var + (obs_prior(cc)-obs_prior_mean)**2 / (1.0_r8*ens_size-1)
       enddo
-      
-      ! not sure why the below does not work...
-!     ! obs_prior_var  = sum( (obs_prior - obs_prior_mean)**2 )/(1.0_r8*ens_size-1)
-!      write(*,*) 'obs_prior - mean  = ', obs_prior - obs_prior_mean
-!      write(*,*) 'mean =', obs_prior_mean, 'variance = ', obs_prior_var
 
       ! Need to modify below espeically for non-local observations
       ! uncomment the below two lines to get "B localization"
@@ -1086,6 +1084,9 @@ SEQUENTIAL_OBS: do i = 1, obs_ens_handle%num_vars
          ! CCHU: important change here!
          ! Do NOT update the state variable immediately, ONLY store the increment for now, and will
          ! be added to the state variable later
+         ! Notably, although unnecessary, but all the state updates are done in filter_mod
+         ! (search %state_inc to trace back )
+         ! please trace back the "one_inner_to_state_inc" for details
 
          !if(.not. inflate_only) ens_handle%copies(1:ens_size, state_index) = updated_ens
 
@@ -1317,8 +1318,10 @@ else if (prior_var == 0.0_r8) then
    norm_inner_increment  = 0.0_r8
 
 else
-! CCWU (test PFF) SO...
-filter_kind = 9
+
+   ! CCHU (This algorithm has only been tested for PFF).
+   filter_kind = 9
+
    ! Call the appropriate filter option to compute increments for ensemble
    ! note that at this point we've taken care of the cases where either the
    ! obs_var or the prior_var is 0, so the individual routines no longer need
@@ -1389,6 +1392,8 @@ subroutine obs_increment_pff(iter, max_iter, ens_size, Ni,              &
 !========================================================================
 !
 ! PFF version of "inner domain" increment
+! Calculates the increment for inner domain variables ("inner_increment")
+! for one iteration (essentially evaluating the particle flow)
 
 !Use lapack_interfaces, Only: dgesvd
 
@@ -3273,7 +3278,7 @@ endif
 ! Get the updated ensemble
 !if(.not. inflate_only) ens = ens + final_factor * increment
 
-! CCWU: important change here!
+! CCHU: important change here!
 if (.not. inflate_only) one_inner_to_state_inc = final_factor * increment
 
 end subroutine obs_updates_ens

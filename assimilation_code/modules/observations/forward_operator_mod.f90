@@ -468,19 +468,6 @@ do i = 1, num_obs
       endif
 
       expected_obs =  get_state(-1*int(obs_kind_ind,i8), state_ens_handle)
-      
-      ! calculate the pairwise kernel values
-!      k_width = 5
-!      do j = 1, num_ens
-!          do k = 1, num_ens
-!                if (j>k) then
-!                        kernel(j,k) = kernel(k,j)
-!                else
-!                        kernel(j,k) = abs(expected_obs(j)-expected_obs(k))
-!                       ! kernel(j,k) = exp( -(expected_obs(j)-expected_obs(k))**2/k_width )
-!                endif
-!          enddo
-!      enddo
 
       ! FIXME : we currently have no option to eval only identity obs,
       ! or select to skip their assimilation via namelist.

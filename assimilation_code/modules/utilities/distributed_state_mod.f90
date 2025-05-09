@@ -75,7 +75,7 @@ real(r8) :: x(data_count) !! all copies of an element of the state vector
 integer(i8),         intent(in)  :: my_index !! index into state vector
 type(ensemble_type), intent(in)  :: ens_handle
 
-! CCWU
+! CCHU: add_inner_domain is a control to exclude adding a specific variable to inner dmoain
 logical, intent(in), optional    :: add_inner_domain
 logical :: if_add_inner_domain
 
@@ -91,7 +91,7 @@ if (current_win == MEAN_WINDOW) then
 else if (current_win == STATE_WINDOW) then
    call get_fwd(x, my_index, ens_handle)
 
-! CCWU
+! CCHU
    if (if_add_inner_domain)  call add_var_inner_domain(my_index, x)
    !write(my_task_id() + 50, *) 'Getting state variable ', my_index
 else

@@ -27,7 +27,7 @@ do
 
    if [ "$i" -eq $n_start ]; then
 
-      # STEP 1: ensemble forecasting and record the obs space prior
+      # STEP 1: record the obs space prior (without ensemble forecasting)
       echo "=== STEP 1: record the first cycle obs space prior ==="
 
       cp input.nml.template input.nml
@@ -57,8 +57,9 @@ EOF
 
       cp input.nml ./temp_for_input_nml/"input.nml_prior_${dd}_${ss}" # save the input.nml files for debugging
 
-      ./filter >& ${log_file}/prior_log_${dd}_${ss}
+      #./filter >& ${log_file}/prior_log_${dd}_${ss}
       #mpirun -n 5 ./filter >& ${log_file}/prior_log_${dd}_${ss}
+      srun --time=00:10:00 -n 2 ./filter >& ${log_file}/prior_log_${dd}_${ss}
 
     else # if not the first DA cycle:
 
@@ -93,7 +94,8 @@ EOF
 
       cp input.nml ./temp_for_input_nml/"input.nml_prior_${dd}_${ss}"
       #./filter >& ${log_file}/prior_log_${dd}_${ss}
-      mpirun -n 5 ./filter >& ${log_file}/prior_log_${dd}_${ss}
+      #mpirun -n 5 ./filter >& ${log_file}/prior_log_${dd}_${ss}
+      srun --time=00:10:00 -n 2 ./filter >& ${log_file}/prior_log_${dd}_${ss}
 
    fi
 
@@ -130,7 +132,8 @@ EOF
 
    cp input.nml ./temp_for_input_nml/"input.nml_DA_${dd}_${ss}"
    #./filter >& ${log_file}/DA_log_${dd}_${ss}
-   mpirun -n 5 ./filter >& ${log_file}/DA_log_${dd}_${ss}
+   #mpirun -n 5 ./filter >& ${log_file}/DA_log_${dd}_${ss}
+   srun --time=00:10:00 -n 2 ./filter >& ${log_file}/DA_log_${dd}_${ss}
 
    # STEP 3: Record the obs space diagnostics for posterior
    echo "=== STEP 3: Record the obs space diagnostics for posterior      ==="

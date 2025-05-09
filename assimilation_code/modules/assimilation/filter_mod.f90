@@ -715,6 +715,7 @@ endif
 
 ! CCHU (2023/04/26)
 ! test of adaptive prior inflation
+! note that async == 1 is used for DA-mode
 if (async == 1) then
 
    if(do_ss_inflate(prior_inflate)) then
@@ -747,7 +748,7 @@ endif ! endif async == 1
 ! CCHU (2022/01/20)
 ! sequential DA algorithm for PFF-DART:
 ! allocate stuff for every pe:
-max_ni=50 ! CAUTION ::  max_ni should be larger than Ni and be consistent with inner_domain_mod
+max_ni=50 ! CAUTION ::  max_ni should be larger than Ni and be consistent the "max_num_vars" in inner_domain_mod.f90
 
 allocate(eps_adap(max_iter))
 allocate(percentage_scalar_norm(max_iter))
@@ -948,15 +949,6 @@ if (async==1) then ! use namelist to control if doing below for DA (e.g., not
    ! The start of PFF iteration
    iter = 1
 
-   ! Save the state during all iterations:
-   !if (my_task_id().eq.0) then   
-   !   output_name='./output_temp/PFF_obs_inner_evo.dat'
-   !   n_my_state=state_ens_handle%my_num_vars
-   !   n_my_state = 4
-   !   open(12,file=output_name,status='unknown',form='unformatted',access='direct',recl=8*n_my_state*ens_size)
-      !write(*,*) state_ens_handle%my_vars
-   !endif
-
    ! Adaptive learning rate: initialization
    eps_adap(:) = 1 ! initial value for learning rate
 
@@ -973,271 +965,269 @@ if (async==1) then ! use namelist to control if doing below for DA (e.g., not
    ! Adaptive kernel width: initialization
    initial_ker_alpha = 1.0_r8
 
-do while ((iter.le.max_iter).AND.(eps_adap(iter).ge.min_eps_adap*1.0_r8).AND.(.not.early_stop))
+   PFF_iteration: do while ((iter.le.max_iter).AND.(eps_adap(iter).ge.min_eps_adap*1.0_r8).AND.(.not.early_stop)) ! main PFF iterations
 
-   !if (my_task_id().eq.0) then
-   !   write(*,*) 'PFF iteration ', iter
-   !   write(12, rec=iter) state_ens_handle%copies(1:ens_size,1:n_my_state)
-   !endif
+      ! If you would like to save states during all iterations (which will generate large files!) then modify below:
+      ! ===================================
+      !if (my_task_id().eq.0) then
+      !   write(*,*) 'PFF iteration ', iter
+      !   write(12, rec=iter) state_ens_handle%copies(1:ens_size,1:n_my_state)
+      !endif
+      ! ===================================
 
-   call get_obs_ens_distrib_state(state_ens_handle, obs_fwd_op_ens_handle, &
-           qc_ens_handle, seq, keys, obs_val_index, input_qc_index, &
-           OBS_ERR_VAR_COPY, OBS_VAL_COPY, OBS_KEY_COPY, OBS_GLOBAL_QC_COPY, &
-           OBS_EXTRA_QC_COPY, OBS_MEAN_START, OBS_VAR_START, &
-           isprior=.true., prior_qc_copy=prior_qc_copy)
+      ! evaluate H(x)
+      ! Note that inner domain will be defined when H(x) is called
+      ! trace this function back to subroutines "get_expected_obs_distrib_state" and "get_state"
+      call get_obs_ens_distrib_state(state_ens_handle, obs_fwd_op_ens_handle, &
+              qc_ens_handle, seq, keys, obs_val_index, input_qc_index, &
+              OBS_ERR_VAR_COPY, OBS_VAL_COPY, OBS_KEY_COPY, OBS_GLOBAL_QC_COPY, &
+              OBS_EXTRA_QC_COPY, OBS_MEAN_START, OBS_VAR_START, &
+              isprior=.true., prior_qc_copy=prior_qc_copy)
 
-   ! Check on the inner domain info
-   call output_inner_domain_info(50 + my_task_id())
+      ! Check on the inner domain info
+      call output_inner_domain_info(50 + my_task_id())
 
-   if ( iter.eq.1 ) then ! save prior information
+      ! save prior information 
+      if ( iter.eq.1 ) then
 
-      ! Note that for current PFF-DART version, we are doing one obs at a time
-      ! so should only deal with one obs in the loop
-      ! and the obs is always stored in the first PE
+         ! Note that for current PFF-DART version, we are doing one obs at a time
+         ! so should ONLY deal with "one" obs in the loop
+         ! and the obs is always stored in the first PE
 
-      n_my_obs = obs_fwd_op_ens_handle%my_num_vars
-      !print*, '  pe = ', my_task_id(),'#obs = ', n_my_obs
+         n_my_obs = obs_fwd_op_ens_handle%my_num_vars
 
-      ! save the info for prior x for all PE:
-      state_ens_handle%state_prior   = state_ens_handle%copies(1:ens_size,:)
+         ! save the info for prior x for all PE:
+         state_ens_handle%state_prior = state_ens_handle%copies(1:ens_size,:)
 
-      ! save the prior info for the inner domain 
-      ! note this is ONLY for the owner of the obs (which should be the 1st pe):
-      Ni = get_num_vars_inner_domain(1) ! get # of inner domain variables
+         ! save the prior info for the inner domain 
+         ! note this is ONLY for the owner of the obs (which should be the 1st pe):
+         Ni = get_num_vars_inner_domain(1) ! Ni = # of inner domain variables
       
-      ! CCHU 2023/02/14: also inquire inner index:
-      inner_index = 0
-      !call get_var_index_inner_domain(1, inner_index(1:Ni), Ni)
-      !print*, inner_index(1:Ni)
+         ! for sanity check (and potential future use)
+         ! we can also inquire inner domain variable indices as follows:
+         ! =================================
+         !inner_index = 0
+         !call get_var_index_inner_domain(1, inner_index(1:Ni), Ni)
+         !print*, inner_index(1:Ni)
+         ! =================================
 
-      if ((n_my_obs.gt.0).and.(Ni.gt.0)) then ! only do for the pe who owns the obs
-         allocate(obs_fwd_op_ens_handle%hx_prior    (ens_size)               )
-         allocate(obs_fwd_op_ens_handle%inner_prior (ens_size, Ni)           )
-         allocate(obs_fwd_op_ens_handle%inner_inc   (ens_size, Ni, max_iter) )
+         ! put the inner domain info into obs_fwd_op_ens_handle
+         ! note that this is ONLY for the PE who owns the obs (in this case, only the 1st PE)
+         if ((n_my_obs.gt.0).and.(Ni.gt.0)) then
+            allocate(obs_fwd_op_ens_handle%hx_prior    (ens_size)               )
+            allocate(obs_fwd_op_ens_handle%inner_prior (ens_size, Ni)           )
+            allocate(obs_fwd_op_ens_handle%inner_inc   (ens_size, Ni, max_iter) )
 
-         obs_fwd_op_ens_handle%hx_prior = obs_fwd_op_ens_handle%copies(1:ens_size,1)
+            obs_fwd_op_ens_handle%hx_prior = obs_fwd_op_ens_handle%copies(1:ens_size,1)
 
-         do jj = 1, Ni
-            call get_var_ens_inner_domain(1, jj, obs_fwd_op_ens_handle%inner_prior(:,jj))
-         enddo
-      endif
+            do jj = 1, Ni
+               call get_var_ens_inner_domain(1, jj, obs_fwd_op_ens_handle%inner_prior(:,jj))
+            enddo
+         endif
 
+         ! and with a lot of saving and moving data around...
+         call timestamp_message('After  computing prior observation values')
+         call     trace_message('After  computing prior observation values')
 
-      call timestamp_message('After  computing prior observation values')
-      call     trace_message('After  computing prior observation values')
+         ! Write out preassim diagnostic files if requested.  This contains potentially 
+         ! damped prior inflation values and the inflated ensemble.
 
-      ! Write out preassim diagnostic files if requested.  This contains potentially 
-      ! damped prior inflation values and the inflated ensemble.
+         if (get_stage_to_write('preassim')) then
+            if ((output_interval > 0) .and. &
+                (time_step_number / output_interval * output_interval == time_step_number)) then
 
-      if (get_stage_to_write('preassim')) then
-         if ((output_interval > 0) .and. &
-             (time_step_number / output_interval * output_interval == time_step_number)) then
+               call     trace_message('Before preassim state space output')
+               call timestamp_message('Before preassim state space output')
 
-            call     trace_message('Before preassim state space output')
-            call timestamp_message('Before preassim state space output')
+               ! save or output the data
+               if (write_all_stages_at_end) then
+                  call store_copies(state_ens_handle, PREASSIM_COPIES)
+               else
+                  call write_state(state_ens_handle, file_info_preassim)
+               endif
 
-            ! save or output the data
-            if (write_all_stages_at_end) then
-               call store_copies(state_ens_handle, PREASSIM_COPIES)
-            else
-               call write_state(state_ens_handle, file_info_preassim)
+               call timestamp_message('After  preassim state space output')
+               call     trace_message('After  preassim state space output')
+
             endif
+         endif
 
-            call timestamp_message('After  preassim state space output')
-            call     trace_message('After  preassim state space output')
+         call trace_message('Before observation space diagnostics')
 
+         ! This is where the mean obs
+         ! copy ( + others ) is moved to task 0 so task 0 can update seq.
+         ! There is a transpose (all_copies_to_all_vars(obs_fwd_op_ens_handle)) in obs_space_diagnostics
+         ! Do prior observation space diagnostics and associated quality control
+         call obs_space_diagnostics(obs_fwd_op_ens_handle, qc_ens_handle, ens_size, &
+              seq, keys, PRIOR_DIAG, num_output_obs_members, in_obs_copy+1, &
+              obs_val_index, OBS_KEY_COPY, &
+              prior_obs_mean_index, prior_obs_spread_index, num_obs_in_set, &
+              OBS_MEAN_START, OBS_VAR_START, OBS_GLOBAL_QC_COPY, &
+              OBS_VAL_COPY, OBS_ERR_VAR_COPY, DART_qc_index, compute_posterior)
+         call trace_message('After  observation space diagnostics')
+
+         write(msgstring, '(A,I8,A)') 'Ready to assimilate up to', size(keys), ' observations'
+         call trace_message(msgstring, 'filter:', -1)
+
+         call     trace_message('Before observation assimilation')
+         call timestamp_message('Before observation assimilation')
+
+      endif ! endif iter==1
+
+      ! you can save inner domain info for each iteration (also large files)
+      ! ====================================
+      !Ni = get_num_vars_inner_domain(1)
+      !do jj = 1, Ni
+      !   call get_var_ens_inner_domain(1, jj, inner_tmp_for_save(:,jj))
+      !enddo
+      !write(12, rec=iter) inner_tmp_for_save
+      ! =====================================
+
+
+      ! The main filter (e.g., PFF) algorithm:
+      call filter_assim(state_ens_handle, obs_fwd_op_ens_handle, seq, keys,   &
+         ens_size, num_groups, obs_val_index, prior_inflate,                  &
+         ENS_MEAN_COPY, ENS_SD_COPY,                                          &
+         PRIOR_INF_COPY, PRIOR_INF_SD_COPY, OBS_KEY_COPY, OBS_GLOBAL_QC_COPY, &
+         OBS_MEAN_START, OBS_MEAN_END, OBS_VAR_START,                         &
+         OBS_VAR_END, inflate_only = .false.,                                 &
+         iter=iter, max_iter=max_iter,                                        &
+         initial_ker_alpha=initial_ker_alpha, outer_update=.false. )                                
+
+      !if ((my_task_id().eq.0).and.(iter.eq.1)) then
+      !   print*, 'initial_ker_alpha = ', initial_ker_alpha
+      !endif
+
+      ! important: clear the inner domain info before the next time evaluating H(x)
+      call clear_inner_domain
+
+      ! Note that PFF does not replace the state_ens_handle%copies by the new values
+      ! in the filter_assim module. Instead, PFF save the "temporary update" in "state_inc". 
+      ! This is because whether PFF needs to update depends on the variable "pff_update" (true
+      ! or false). If pff_update=true, then update the state_ens_handle%copies (by
+      ! adding state_inc); if pff_update=false, then go back to previous iteration
+      ! with smaller eps_adap
+
+      ! The following is the specification of adaptive learning rate strategy for iterations
+      ! The current one in only tested for PFF and might be quite experimental. 
+      ! One may want to design your own strategy for better convergence in other iterative filters.
+      ! This determines if pff_update / early_stop  = .true. or .false. based on obs_handle% scalar_norm
+      ! (Note that every pe has the norm info)
+
+      percentage_scalar_norm(iter) = obs_fwd_op_ens_handle%scalar_norm(iter)/obs_fwd_op_ens_handle%scalar_norm(1)*100
+
+      ! you can print out the norm in each iteration:
+      ! =============================
+      !if ( my_task_id().eq.0 ) then
+      !   write(*,100) 'PFF norm inc is =', percentage_scalar_norm(iter),'%'
+      !   100 format (A21,F6.2,A2)
+      !endif      
+      ! =============================
+
+      if ( iter.eq.1 ) then ! 1st iter always update
+         pff_update = .true.
+         early_stop = .false.
+      elseif ( eakffg_io .and. (iter .le. 2) ) then ! for EAKF as a first-guess, always update 2nd iter
+         pff_update = .true. 
+         early_stop = .false.
+      else
+         if ( percentage_scalar_norm(iter) .ge. &
+               norm_increase_tolerance + percentage_scalar_norm(iter-1) ) then
+            pff_update = .false.
+            early_stop = .false.
+         elseif ( percentage_scalar_norm(iter) .le. early_stop_criterion ) then
+            pff_update = .true.
+            early_stop = .true.
+         else
+            pff_update = .true.
+            early_stop = .false.
          endif
       endif
-
-      call trace_message('Before observation space diagnostics')
-
-      ! This is where the mean obs
-      ! copy ( + others ) is moved to task 0 so task 0 can update seq.
-      ! There is a transpose (all_copies_to_all_vars(obs_fwd_op_ens_handle)) in obs_space_diagnostics
-      ! Do prior observation space diagnostics and associated quality control
-      call obs_space_diagnostics(obs_fwd_op_ens_handle, qc_ens_handle, ens_size, &
-           seq, keys, PRIOR_DIAG, num_output_obs_members, in_obs_copy+1, &
-           obs_val_index, OBS_KEY_COPY, &
-           prior_obs_mean_index, prior_obs_spread_index, num_obs_in_set, &
-           OBS_MEAN_START, OBS_VAR_START, OBS_GLOBAL_QC_COPY, &
-           OBS_VAL_COPY, OBS_ERR_VAR_COPY, DART_qc_index, compute_posterior)
-      call trace_message('After  observation space diagnostics')
-
-      write(msgstring, '(A,I8,A)') 'Ready to assimilate up to', size(keys), ' observations'
-      call trace_message(msgstring, 'filter:', -1)
-
-      call     trace_message('Before observation assimilation')
-      call timestamp_message('Before observation assimilation')
-
-   endif ! endif iter==1
-
-   ! save inner domain info for each iteration
-   !Ni = get_num_vars_inner_domain(1)
-
-   !do jj = 1, Ni
-   !   call get_var_ens_inner_domain(1, jj, inner_tmp_for_save(:,jj))
-   !enddo
-
-   !write(12, rec=iter) inner_tmp_for_save
-
-
-   call filter_assim(state_ens_handle, obs_fwd_op_ens_handle, seq, keys,   &
-      ens_size, num_groups, obs_val_index, prior_inflate,                  &
-      ENS_MEAN_COPY, ENS_SD_COPY,                                          &
-      PRIOR_INF_COPY, PRIOR_INF_SD_COPY, OBS_KEY_COPY, OBS_GLOBAL_QC_COPY, &
-      OBS_MEAN_START, OBS_MEAN_END, OBS_VAR_START,                         &
-      OBS_VAR_END, inflate_only = .false.,                                 &
-      iter=iter, max_iter=max_iter,                                        &
-      initial_ker_alpha=initial_ker_alpha, outer_update=.false. )                                
-
-   !if ((my_task_id().eq.0).and.(iter.eq.1)) then
-   !   print*, 'initial_ker_alpha = ', initial_ker_alpha
-   !endif
-
-   ! PFF clear info in the inner domain
-   call clear_inner_domain
-
-   ! Note that PFF does not replace the state_ens_handle%copies by the new values
-   ! in the filter_assim module. Instead, PFF save the "temporary update" in "state_inc". 
-   ! This is because whether PFF needs to update depends on the variable "pff_update" (true
-   ! or false). If pff_update=true, then update the state_ens_handle%copies (by
-   ! adding state_inc); if pff_update=false, then go back to previous iteration
-   ! with smaller eps_adap
-
-   ! Determine if pff_update / early_stop  = .true. or .false. based on obs_handle% scalar_norm
-   ! Note that every pe has the norm info
-
-   percentage_scalar_norm(iter) = obs_fwd_op_ens_handle%scalar_norm(iter)/obs_fwd_op_ens_handle%scalar_norm(1)*100
-
-   if ( my_task_id().eq.0 ) then
-      !write(*,100) 'PFF norm inc is =', percentage_scalar_norm(iter),'%'
-      100 format (A21,F6.2,A2)
-   endif      
-
-   if ( iter.eq.1 ) then ! 1st iter always update
-      pff_update = .true.
-      early_stop = .false.
-     
-   elseif ( eakffg_io .and. (iter .le. 2) ) then ! for EAKF as a first-guess, always update 2nd iter
-      pff_update = .true. 
-      early_stop = .false.
-
-   else
-      if ( percentage_scalar_norm(iter) .ge. &
-            norm_increase_tolerance + percentage_scalar_norm(iter-1) ) then
-         pff_update = .false.
-         early_stop = .false.
-
-      elseif ( percentage_scalar_norm(iter) .le. early_stop_criterion ) then
-         pff_update = .true.
-         early_stop = .true.
-
-      else
-         pff_update = .true.
-         early_stop = .false.
-
-      endif
-   endif
   
-   ! special case:
-   !if ( obs_fwd_op_ens_handle%scalar_norm(iter) .le. 1e-15 ) then
-   !    pff_update = .false.
-   !    early_stop = .false.
-   !
-   !    if (my_task_id()==0) print*, 'CAUTIOUS: it seems either prior var =0 / learning rate too large... '
-   !endif
+      ! special case:
+      !if ( obs_fwd_op_ens_handle%scalar_norm(iter) .le. 1e-15 ) then
+      !    pff_update = .false.
+      !    early_stop = .false.
+      !
+      !    if (my_task_id()==0) print*, 'CAUTIOUS: it seems either prior var =0 / learning rate too large... '
+      !endif
  
-   ! The actual update loop:
-   if (pff_update) then
-      if (my_task_id().eq.0) then
-         !write(*,101) 'finish iteration ',iter,' , adaptive learning rate = ',eps_adap(iter)
-         101 format (A21,I3,A26,F6.4)
+      ! The actual update loop:
+      if (pff_update) then
+         !if (my_task_id().eq.0) then
+         !   write(*,101) 'finish iteration ',iter,' , adaptive learning rate = ',eps_adap(iter)
+         !   101 format (A21,I3,A26,F6.4)
+         !endif
+         state_prev_iter = state_ens_handle%copies(1:ens_size,:) ! state of previous iteration
+         state_ens_handle%copies(1:ens_size,:) = state_prev_iter + eps_adap(iter)*state_ens_handle%state_inc
+         iter = iter + 1
+      else
+         ! re-update the previous iteration with smaller eps
+         ! x(i) = x(i-1) + decrease_rate*(x(i)-x(i-1)) 
+         ! the decrease rate (eps_adap_decrease) is controlled by the namelist input.nml
+         state_ens_handle%copies(1:ens_size,:) = state_prev_iter + &
+                                  eps_adap_decrease*( state_ens_handle%copies(1:ens_size,:) - state_prev_iter )
+
+         ! make the following learning rate smaller:
+         eps_adap(iter-1:max_iter) = eps_adap(iter-1)*eps_adap_decrease
+
+         if (my_task_id().eq.0) then
+            write(*,102) '!!! learning rate too large, try smaller learning rate ',eps_adap(iter)
+            102 format (A63, F6.4)
+         endif
+
+      endif ! pff_update
+
+      if ((early_stop).and.(my_task_id().eq.0)) then
+         write(*,*) '        reach early stopping criterion.'
       endif
-      state_prev_iter = state_ens_handle%copies(1:ens_size,:) ! state of previous iteration
-      state_ens_handle%copies(1:ens_size,:) = state_prev_iter + eps_adap(iter)*state_ens_handle%state_inc
-      iter = iter + 1
+
+      call task_sync() ! synchronize all the pe at this point
+
+   END DO PFF_iteration ! end of the main PFF iteration
+
+
+   ! check the update of inner domains using the following:
+   !print*,'before update of the outer domain:'
+   !print*,'dx =',sum(state_ens_handle%copies(1:ens_size,:),dim=1)/(ens_size*1.0_r8)- &
+   !              sum(state_ens_handle%state_prior(1:ens_size,:),dim=1)/(ens_size*1.0_r8)
+
+
+   ! second step of the two-step update algorihtm
+   ! update the outer domain, i.e., update_outer = .true. for filter_assim.f90
+
+   if ( pff_update ) then 
+
+      call get_obs_ens_distrib_state(state_ens_handle, obs_fwd_op_ens_handle, &
+              qc_ens_handle, seq, keys, obs_val_index, input_qc_index, &
+              OBS_ERR_VAR_COPY, OBS_VAL_COPY, OBS_KEY_COPY, OBS_GLOBAL_QC_COPY, &
+              OBS_EXTRA_QC_COPY, OBS_MEAN_START, OBS_VAR_START, &
+              isprior=.true., prior_qc_copy=prior_qc_copy)
+
+      ! Check on the inner domain info
+      call output_inner_domain_info(50 + my_task_id())
+
+      call filter_assim(state_ens_handle, obs_fwd_op_ens_handle, seq, keys,   &
+         ens_size, num_groups, obs_val_index, prior_inflate,                  &
+         ENS_MEAN_COPY, ENS_SD_COPY,                                          &
+         PRIOR_INF_COPY, PRIOR_INF_SD_COPY, OBS_KEY_COPY, OBS_GLOBAL_QC_COPY, &
+         OBS_MEAN_START, OBS_MEAN_END, OBS_VAR_START,                         &
+         OBS_VAR_END, inflate_only = .false.,                                 &
+         iter=iter, max_iter=max_iter,                                        &
+         initial_ker_alpha=initial_ker_alpha, outer_update=.true. )
+
+      call clear_inner_domain
+
+      ! update the whole state:
+      state_ens_handle%copies(1:ens_size,:) = state_ens_handle%state_prior(1:ens_size,:) &
+                                            + state_ens_handle%state_inc
+
    else
-      ! re-update the previous iteration with smaller eps
-      ! x(i) = x(i-1) + decrease_rate*(x(i)-x(i-1)) 
-      ! the decrease rate (eps_adap_decrease) is controlled by the namelist input.nml
-      state_ens_handle%copies(1:ens_size,:) = state_prev_iter + &
-                               eps_adap_decrease*( state_ens_handle%copies(1:ens_size,:) - state_prev_iter )
+      state_ens_handle%copies(1:ens_size,:) = state_prev_iter
 
-      ! make the following learning rate smaller:
-      eps_adap(iter-1:max_iter) = eps_adap(iter-1)*eps_adap_decrease
-
-      if (my_task_id().eq.0) then
-         write(*,102) '!!! learning rate too large, try smaller learning rate ',eps_adap(iter)
-         102 format (A63, F6.4)
-      endif
-
-   endif
-
-   if ((early_stop).and.(my_task_id().eq.0)) then
-      write(*,*) '        reach early stopping criterion.'
-   endif
-
-   call task_sync() ! synchronize all the pe at this point
-
-END DO ! PFF iteration
-
-
-!if (my_task_id()==0) print*, '        finish PFF iteration. Total iteration =', iter-1
-
-
-! print all dx:
-!print*,'before update of the outer domain:'
-!print*,'dx =',sum(state_ens_handle%copies(1:ens_size,:),dim=1)/(ens_size*1.0_r8)- &
-!              sum(state_ens_handle%state_prior(1:ens_size,:),dim=1)/(ens_size*1.0_r8)
-
-
-! CCHU: 2023/02/16
-! final step: update the outer domain:
-! update_outer = .true.
-
-if ( pff_update ) then 
-
-   call get_obs_ens_distrib_state(state_ens_handle, obs_fwd_op_ens_handle, &
-           qc_ens_handle, seq, keys, obs_val_index, input_qc_index, &
-           OBS_ERR_VAR_COPY, OBS_VAL_COPY, OBS_KEY_COPY, OBS_GLOBAL_QC_COPY, &
-           OBS_EXTRA_QC_COPY, OBS_MEAN_START, OBS_VAR_START, &
-           isprior=.true., prior_qc_copy=prior_qc_copy)
-
-   ! Check on the inner domain info
-   call output_inner_domain_info(50 + my_task_id())
-
-   call filter_assim(state_ens_handle, obs_fwd_op_ens_handle, seq, keys,   &
-      ens_size, num_groups, obs_val_index, prior_inflate,                  &
-      ENS_MEAN_COPY, ENS_SD_COPY,                                          &
-      PRIOR_INF_COPY, PRIOR_INF_SD_COPY, OBS_KEY_COPY, OBS_GLOBAL_QC_COPY, &
-      OBS_MEAN_START, OBS_MEAN_END, OBS_VAR_START,                         &
-      OBS_VAR_END, inflate_only = .false.,                                 &
-      iter=iter, max_iter=max_iter,                                        &
-      initial_ker_alpha=initial_ker_alpha, outer_update=.true. )
-
-   call clear_inner_domain
-
-   ! update the whole state:
-   state_ens_handle%copies(1:ens_size,:) = state_ens_handle%state_prior(1:ens_size,:) &
-                                         + state_ens_handle%state_inc
-
-else
-   state_ens_handle%copies(1:ens_size,:) = state_prev_iter
-
-endif ! if pff_update = true
-
-
-
-   !write(12, rec=iter) sum(obs_fwd_op_ens_handle%inner_inc(:,:,1:iter-1),dim=3)
-
-   !if (allocated(eps_adap))        deallocate(eps_adap)
-   !if (allocated(state_prev_iter)) deallocate(state_prev_iter)
-
-   !if (allocated(state_ens_handle%state_inc)       ) deallocate(state_ens_handle%state_inc)
-   !if (allocated(state_ens_handle%state_prior)     ) deallocate(state_ens_handle%state_prior)
+   endif ! if pff_update = true
 
 endif ! if async == 1
-
 
    call timestamp_message('After  observation assimilation')
    call     trace_message('After  observation assimilation')
@@ -1468,26 +1458,24 @@ call trace_message('End of main filter assimilation loop, starting cleanup', 'fi
 ! This block applies posterior inflation
 
 if (async==1) then
+   if(do_ss_inflate(post_inflate)) then
 
-if(do_ss_inflate(post_inflate)) then
+      call trace_message('Before posterior inflation applied to state')
 
-   call trace_message('Before posterior inflation applied to state')
+      if (do_rtps_inflate(post_inflate)) then
+         call filter_ensemble_inflate(state_ens_handle, POST_INF_COPY, post_inflate, &
+                       ENS_MEAN_COPY, SPARE_PRIOR_SPREAD, ENS_SD_COPY)
+      else
+         call filter_ensemble_inflate(state_ens_handle, POST_INF_COPY, post_inflate, &
+                       ENS_MEAN_COPY)
+      endif
 
-   if (do_rtps_inflate(post_inflate)) then
-      call filter_ensemble_inflate(state_ens_handle, POST_INF_COPY, post_inflate, &
-                    ENS_MEAN_COPY, SPARE_PRIOR_SPREAD, ENS_SD_COPY)
-   else
-      call filter_ensemble_inflate(state_ens_handle, POST_INF_COPY, post_inflate, &
-                    ENS_MEAN_COPY)
+      ! Recompute the mean or the mean and spread as required for diagnostics
+      call compute_copy_mean_sd(state_ens_handle, 1, ens_size, ENS_MEAN_COPY, ENS_SD_COPY)
+
+      call trace_message('After  posterior inflation applied to state')
+
    endif
-
-   ! Recompute the mean or the mean and spread as required for diagnostics
-   call compute_copy_mean_sd(state_ens_handle, 1, ens_size, ENS_MEAN_COPY, ENS_SD_COPY)
-
-   call trace_message('After  posterior inflation applied to state')
-
-endif
-
 endif ! async == 1
 
 ! Output the adjusted ensemble. If cycling only the last timestep is writen out

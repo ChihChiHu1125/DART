@@ -131,6 +131,7 @@ LD = gfortran
 # are found for the netcdf files that match this compiler.
 #
 # NETCDF = /opt/local
+NETCDF = /usr/local/netcdf/gcc/hdf5-1.14.4/intel-mpi/4.9.2/
 
 INCS = -I$(NETCDF)/include
 LIBS = -L$(NETCDF)/lib -lnetcdff -lnetcdf -llapack -lblas
